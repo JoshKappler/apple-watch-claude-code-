@@ -12,6 +12,7 @@ import WatchKit
 struct PinchApp: App {
     @WKApplicationDelegateAdaptor(PinchAppDelegate.self) private var appDelegate
     @StateObject private var store = PinchStore()
+    @StateObject private var dictationRouter = DictationRouter.shared
     @Environment(\.scenePhase) private var scenePhase
 
     // Persisted settings — the single place the user configures server + token.
@@ -26,6 +27,11 @@ struct PinchApp: App {
                 .onAppear {
                     appDelegate.push = store.push
                     store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
+                    consumeDictationRequest()   // cold launch via the Action button
+                }
+                // Action button (warm app) → start dictation.
+                .onChange(of: dictationRouter.shouldStartDictation) { _, requested in
+                    if requested { consumeDictationRequest() }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
@@ -49,6 +55,15 @@ struct PinchApp: App {
         if store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted) {
             store.onActive()
         }
+    }
+
+    /// If the Action button asked us to dictate, present system dictation and fold the
+    /// result into the draft. Handles both cold launch (onAppear) and warm (onChange).
+    @MainActor
+    private func consumeDictationRequest() {
+        guard dictationRouter.shouldStartDictation else { return }
+        dictationRouter.shouldStartDictation = false
+        Dictation.present { store.appendDictated($0) }
     }
 }
 

@@ -58,10 +58,12 @@ struct CaretEditorView: View {
 
             HStack(spacing: 8) {
                 // Apple system dictation; inserts the result at the caret.
-                TextFieldLink {
+                Button {
+                    Dictation.present { insertAtCaret($0) }
+                } label: {
                     Image(systemName: "mic.fill")
                         .frame(width: 42, height: 36)
-                } onSubmit: { insertAtCaret($0) }
+                }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Dictate at cursor")
 

@@ -3,8 +3,8 @@
 //  PinchStore — the single source of truth the whole UI binds to.
 //
 //  Owns: the WSClient (connection), Speaker (TTS+haptic), ShakeDetector (cancel).
-//  Voice input uses Apple's system dictation (TextFieldLink) inline in the composer — there
-//  is no in-app SpeechRecognizer because SFSpeechRecognizer does not function on watchOS.
+//  Voice input uses Apple's system dictation (presented via Dictation.present) — there is no
+//  in-app SpeechRecognizer because SFSpeechRecognizer does not function on watchOS.
 //  Holds connection state, the transcript, the current permission
 //  request, mode, and projects. Exposes intent methods the views call: send / approve /
 //  decline / setMode / cancel / selectProject.
@@ -50,6 +50,9 @@ final class PinchStore: ObservableObject {
     // Conversation.
     @Published var transcript: [TranscriptItem] = []
     @Published var thinkingActive = false          // subtle "extended thinking" indicator
+
+    // The message being composed (dictation appends here; the composer + caret editor bind to it).
+    @Published var draft = ""
 
     // Permission gate.
     @Published var pendingPermission: ServerMsg.PermissionRequest?
@@ -135,6 +138,14 @@ final class PinchStore: ObservableObject {
         guard !trimmed.isEmpty, case .ready = connection else { return }
         transcript.append(.user(text: trimmed))
         ws?.send(.prompt(text: trimmed))
+        Haptics.click()
+    }
+
+    /// Fold a dictation result into the draft (used by the mic button and the Action button).
+    func appendDictated(_ raw: String) {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        draft = draft.isEmpty ? t : draft + " " + t
         Haptics.click()
     }
 
