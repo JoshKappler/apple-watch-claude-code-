@@ -24,7 +24,11 @@ import { config } from "./config.js";
 import { log } from "./log.js";
 import { ApprovalRegistry } from "./approvals.js";
 import { projectRegistry, type Project } from "./projects.js";
-import type { AgentSession, SessionDeps } from "./sessionTypes.js";
+import type {
+  AgentSession,
+  SessionDeps,
+  ThinkingLevel,
+} from "./sessionTypes.js";
 import { createMockSession } from "./mockSession.js";
 // session.js imports the SDK only lazily (inside start()), so importing the
 // factory here does NOT pull the SDK in at module scope.
@@ -60,6 +64,10 @@ export interface SessionState {
   approvals: ApprovalRegistry;
   project: Project;
   mode: PermissionMode;
+  /** Active model id for this session (defaults to config.model). */
+  model: string;
+  /** Active extended-thinking level for this session (defaults to "off"). */
+  thinking: ThinkingLevel;
   /** Monotonic-indexed ring buffer of outbound agent frames (poll + WS replay). */
   eventLog: LoggedEvent[];
   /** Next index to assign. Never reset, even as the ring trims old entries. */
@@ -93,14 +101,29 @@ export function pushEvent(state: SessionState, msg: ServerMsg): void {
   if (state.socket) trySocketSend(state.socket, msg);
 }
 
-/** Read all logged events with index >= cursor, plus the new high-water mark. */
+/**
+ * Read logged events the client hasn't seen yet, plus the new high-water cursor.
+ *
+ * Contract (must stay exact to avoid duplicate delivery on the watch):
+ *  - `cursor` is the NEXT index the client wants — i.e. the high-water it got
+ *    from the previous poll. We return only events with `index >= cursor`.
+ *  - The returned `cursor` is `nextIndex` (one past the last assigned index), so
+ *    the client stores it and the NEXT poll fetches strictly newer events. No
+ *    range ever overlaps a previous one.
+ *  - A negative/NaN cursor is clamped to 0 by the caller; a cursor already at or
+ *    beyond `nextIndex` yields an empty list (nothing newer yet) — we never
+ *    replay the log for an up-to-date client.
+ */
 export function readEvents(
   state: SessionState,
   cursor: number,
 ): { cursor: number; events: ServerMsg[] } {
   const events: ServerMsg[] = [];
-  for (const e of state.eventLog) {
-    if (e.index >= cursor) events.push(e.msg);
+  // Up-to-date (or ahead-of-log) client: return nothing, just the high-water.
+  if (cursor < state.nextIndex) {
+    for (const e of state.eventLog) {
+      if (e.index >= cursor) events.push(e.msg);
+    }
   }
   return { cursor: state.nextIndex, events };
 }
@@ -126,7 +149,8 @@ export function attachAgent(
     send: (m) => pushEvent(state, m),
     approvals,
     cwd: project.root,
-    model: config.model,
+    model: state.model,
+    thinking: state.thinking,
     initialMode: mode,
     onSessionId: (sdkId) => {
       // Map the SDK's own session id alongside ours so resume:sdkId works.
@@ -144,7 +168,15 @@ export function attachAgent(
 export function createSession(
   project: Project,
   mode: PermissionMode,
-  opts: { deviceId: string | undefined; socket: WebSocket | null; http: boolean },
+  opts: {
+    deviceId: string | undefined;
+    socket: WebSocket | null;
+    http: boolean;
+    /** Optional model override; falls back to config.model. */
+    model?: string;
+    /** Optional thinking level; falls back to "off". */
+    thinking?: ThinkingLevel;
+  },
 ): SessionState {
   const sessionId = `s_${randomUUID().slice(0, 12)}`;
 
@@ -154,6 +186,8 @@ export function createSession(
     approvals: undefined as unknown as ApprovalRegistry, // set by attachAgent
     project,
     mode,
+    model: opts.model ?? config.model,
+    thinking: opts.thinking ?? "off",
     eventLog: [],
     nextIndex: 0,
     socket: opts.socket,

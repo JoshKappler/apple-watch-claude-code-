@@ -16,6 +16,34 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Model + thinking-level config (state contract for the picker UI)
+
+/// A selectable Claude model. `id` is the API model id sent to the backend; `label` is the
+/// short name shown in the picker.
+struct PinchModel: Identifiable, Hashable {
+    let id: String      // API model id
+    let label: String
+}
+
+/// Extended-thinking budget. `rawValue` is what we send to the backend ("off"/"low"/...).
+enum ThinkingLevel: String, CaseIterable, Identifiable {
+    case off, low, medium, high
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .off: return "Off"
+        case .low: return "Think"
+        case .medium: return "Think hard"
+        case .high: return "Ultrathink"
+        }
+    }
+}
+
+/// The contract names the store type `Store`; the concrete ObservableObject is `PinchStore`.
+/// This alias lets the UI agent's `Store.availableModels` resolve while every existing
+/// `@EnvironmentObject … PinchStore` binding keeps working unchanged.
+typealias Store = PinchStore
+
 // MARK: - Transcript model
 
 /// One renderable item in the scrolling transcript.
@@ -90,13 +118,89 @@ final class PinchStore: ObservableObject {
     // assistant_message (or turn boundary) replaces/finalizes it.
     private var streamingAssistantIndex: Int?
 
+    // TTS dedup: the bubble ids we've already spoken, so an assistant message is read aloud
+    // at most once even if its event is somehow re-delivered. Cleared with the transcript.
+    private var spokenAssistantIds: Set<UUID> = []
+
     // Settings (mirrored from @AppStorage by the views via configure()).
     private var serverURLString = ""
     private var token = ""
 
+    // MARK: - Model / thinking / TTS settings (picker UI binds to these directly)
+
+    /// The models the picker offers. Static so the UI can read `Store.availableModels`.
+    static let availableModels: [PinchModel] = [
+        PinchModel(id: "claude-opus-4-8", label: "Opus 4.8"),
+        PinchModel(id: "claude-sonnet-4-6", label: "Sonnet 4.6"),
+        PinchModel(id: "claude-haiku-4-5-20251001", label: "Haiku 4.5"),
+        PinchModel(id: "claude-fable-5", label: "Fable 5"),
+    ]
+
+    // UserDefaults keys for the three persisted settings.
+    private enum SettingsKey {
+        static let model = "pinch.model"
+        static let thinking = "pinch.thinking"
+        static let tts = "pinch.tts"
+    }
+
+    /// Selected API model id. Persisted; pushed to the backend on change when connected.
+    @Published var selectedModel: String = "claude-opus-4-8" {
+        didSet {
+            guard oldValue != selectedModel else { return }
+            UserDefaults.standard.set(selectedModel, forKey: SettingsKey.model)
+            pushConfig()
+        }
+    }
+
+    /// Extended-thinking level. Persisted; pushed to the backend on change when connected.
+    @Published var thinkingLevel: ThinkingLevel = .medium {
+        didSet {
+            guard oldValue != thinkingLevel else { return }
+            UserDefaults.standard.set(thinkingLevel.rawValue, forKey: SettingsKey.thinking)
+            pushConfig()
+        }
+    }
+
+    /// Master TTS on/off. Persisted; gates ALL speech via the Speaker.
+    @Published var ttsEnabled: Bool = true {
+        didSet {
+            guard oldValue != ttsEnabled else { return }
+            UserDefaults.standard.set(ttsEnabled, forKey: SettingsKey.tts)
+            speaker.setEnabled(ttsEnabled)
+        }
+    }
+
     init() {
         shake.onShake = { [weak self] in self?.handleShake() }
         push.onReengage = { [weak self] in self?.onActive() }
+        restoreSettings()
+    }
+
+    /// Load the three persisted settings from UserDefaults (with the contract defaults) and
+    /// apply them. Done in init BEFORE any connection so the first /api/session carries the
+    /// restored model/thinking and the Speaker starts in the right enabled state.
+    private func restoreSettings() {
+        let d = UserDefaults.standard
+        // Register defaults so a first launch reads the contract defaults rather than nil/false.
+        d.register(defaults: [
+            SettingsKey.model: "claude-opus-4-8",
+            SettingsKey.thinking: ThinkingLevel.medium.rawValue,
+            SettingsKey.tts: true,
+        ])
+        // These assignments DO fire didSet, but that's harmless during init: the persist just
+        // re-writes the same stored value, and pushConfig() is a no-op while `ws` is still nil
+        // (no session to push to yet — the values ride the first /api/session instead).
+        selectedModel = d.string(forKey: SettingsKey.model) ?? "claude-opus-4-8"
+        thinkingLevel = ThinkingLevel(rawValue: d.string(forKey: SettingsKey.thinking) ?? "medium") ?? .medium
+        ttsEnabled = d.bool(forKey: SettingsKey.tts)
+        speaker.setEnabled(ttsEnabled)
+    }
+
+    /// Push the current model + thinking to the backend, but only when a session is live.
+    /// (When disconnected the values are staged in WSClient and ride the next /api/session.)
+    private func pushConfig() {
+        guard ws != nil else { return }
+        ws?.updateConfig(model: selectedModel, thinking: thinkingLevel.rawValue)
     }
 
     // MARK: - Configuration
@@ -118,6 +222,9 @@ final class PinchStore: ObservableObject {
             client.onMessage = { [weak self] msg in self?.handle(msg) }
             self.ws = client
         }
+        // Seed the client with the restored model/thinking so the FIRST /api/session body
+        // carries them (no-op'd network push since no session exists yet — it just stages them).
+        ws?.updateConfig(model: selectedModel, thinking: thinkingLevel.rawValue)
         push.configure(serverURL: url, token: token)
         return true
     }
@@ -293,8 +400,16 @@ final class PinchStore: ObservableObject {
             appendAssistantDelta(text)
 
         case let .assistantMessage(text):
-            finalizeAssistant(text)
-            speaker.speak(text)            // speak aloud + haptic (per spec)
+            let bubbleId = finalizeAssistant(text)
+            // Speak each assistant message AT MOST ONCE. The transport already dedupes events
+            // by index (so a re-poll can't re-deliver this), but we ALSO guard here by the
+            // bubble's id so nothing — replay, resume replay, or a backend double-send — can
+            // make us speak the same message twice. The Speaker itself no-ops when ttsEnabled
+            // is false (Bug 2 gate), so this is the single speak() call for an assistant turn.
+            if !spokenAssistantIds.contains(bubbleId) {
+                spokenAssistantIds.insert(bubbleId)
+                speaker.speak(text)        // speak aloud (if enabled) + haptic
+            }
 
         case .thinkingDelta:
             thinkingActive = true          // subtle indicator only; we don't show raw thinking text
@@ -349,16 +464,23 @@ final class PinchStore: ObservableObject {
         }
     }
 
-    private func finalizeAssistant(_ text: String) {
+    /// Finalize the current assistant bubble with the authoritative full text. Returns the
+    /// bubble's stable id so the caller can dedupe TTS (speak each bubble at most once).
+    @discardableResult
+    private func finalizeAssistant(_ text: String) -> UUID {
         if let idx = streamingAssistantIndex,
            idx < transcript.count,
            case let .assistant(id, _) = transcript[idx] {
             // Replace the accumulated deltas with the authoritative full block.
             transcript[idx] = .assistant(id: id, text: text)
+            streamingAssistantIndex = nil
+            return id
         } else {
-            transcript.append(.assistant(text: text))
+            let id = UUID()
+            transcript.append(.assistant(id: id, text: text))
+            streamingAssistantIndex = nil
+            return id
         }
-        streamingAssistantIndex = nil
     }
 
     private func updateToolResult(id: String, ok: Bool) {
@@ -378,5 +500,6 @@ final class PinchStore: ObservableObject {
     func clearTranscript() {
         transcript.removeAll()
         streamingAssistantIndex = nil
+        spokenAssistantIds.removeAll()
     }
 }

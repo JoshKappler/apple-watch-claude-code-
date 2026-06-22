@@ -16,6 +16,40 @@ import type {
 /** How a session pushes protocol frames back out to the connection. */
 export type SendFn = (msg: ServerMsg) => void;
 
+/** Watch-facing extended-thinking level. The wire values never change. */
+export type ThinkingLevel = "off" | "low" | "medium" | "high";
+
+/**
+ * SDK ThinkingConfig shape (local mirror so this file never imports SDK types).
+ * `disabled` = no extended thinking; `enabled` = fixed budget in tokens.
+ */
+export type SdkThinkingConfig =
+  | { type: "disabled" }
+  | { type: "enabled"; budgetTokens?: number };
+
+/**
+ * Map a watch thinking level to the SDK's `thinking` option (Options.thinking,
+ * a ThinkingConfig). Budgets:
+ *   off    → disabled (no extended thinking)
+ *   low    → 4096
+ *   medium → 12000
+ *   high   → 31999 (just under the API's 32k extended-thinking ceiling)
+ * The SDK also exposes setMaxThinkingTokens(N) for mid-session changes, where
+ * 0 disables and any positive value is the budget — we reuse these numbers.
+ */
+export function thinkingConfig(level: ThinkingLevel): SdkThinkingConfig {
+  switch (level) {
+    case "off":
+      return { type: "disabled" };
+    case "low":
+      return { type: "enabled", budgetTokens: 4096 };
+    case "medium":
+      return { type: "enabled", budgetTokens: 12000 };
+    case "high":
+      return { type: "enabled", budgetTokens: 31999 };
+  }
+}
+
 /** Resolved when a parked approval gets a decision. */
 export interface ApprovalGate {
   create(): {
@@ -30,6 +64,8 @@ export interface SessionDeps {
   approvals: ApprovalGate;
   cwd: string;
   model: string;
+  /** Extended-thinking level for the first turn (default "off" when omitted). */
+  thinking?: ThinkingLevel;
   /** Anthropic session id to resume, if reconnecting. */
   resume?: string;
   initialMode: PermissionMode;
@@ -52,6 +88,8 @@ export interface AgentSession {
   cancel(): Promise<void>;
   /** Change permission posture mid-session. */
   setMode(mode: PermissionMode): void;
+  /** Change model and/or thinking level; applies to the next turn (and live query if running). */
+  setConfig(cfg: { model?: string; thinking?: ThinkingLevel }): void;
   /** The Anthropic session id, once known (for resume). */
   readonly sessionId: string | undefined;
 }

@@ -36,9 +36,27 @@ struct ComposerView: View {
     /// edit (caret) vs scroll, set by which control opened the expansion.
     @State private var editMode: InlineEditMode = .scroll
 
-    /// Send is live whenever there's something to send AND the socket isn't permanently dead.
+    /// True when the draft has nothing to send (trimmed empty).
+    private var draftIsEmpty: Bool {
+        store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Send is live whenever there's something to send AND the socket isn't permanently dead. This
+    /// only drives the button's COLOR/fill now — the button stays tappable when empty so the
+    /// double-pinch primary action can fall through to the mic (see primaryAction()).
     private var canSend: Bool {
-        store.connection.isAlive && !store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        store.connection.isAlive && !draftIsEmpty
+    }
+
+    /// The Send button's tap AND the hardware double-pinch route through here: with text it sends,
+    /// empty it opens dictation (same call the mic button uses). So a double-pinch on an empty
+    /// draft starts talking; with a draft it ships.
+    private func primaryAction() {
+        if draftIsEmpty {
+            Dictation.present { store.dictateAtCaret($0) }
+        } else {
+            store.send(store.draft)
+        }
     }
 
     var body: some View {
@@ -68,7 +86,9 @@ struct ComposerView: View {
                 }
 
                 // SEND — always visible, carries the double-pinch primary action. Outer-right.
-                SendButton(enabled: canSend, corner: .right) { store.send(store.draft) }
+                // `live` only sets the coral fill; the button stays tappable so an empty-draft
+                // pinch/tap opens the mic instead of being a dead control.
+                SendButton(live: canSend, corner: .right) { primaryAction() }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
@@ -177,9 +197,13 @@ private struct BarButton: View {
 }
 
 /// Send button — its own type so the `.handGestureShortcut(.primaryAction)` stays anchored to
-/// a single visible, enabled control. Same frame/height as BarButton so tops/bottoms match.
+/// a single visible control. Same frame/height as BarButton so tops/bottoms match.
+///
+/// It is NEVER `.disabled`: a disabled button can't receive the hardware double-pinch, and we want
+/// the pinch to open the mic when the draft is empty. `live` (there's sendable text) only controls
+/// the coral fill — dimmed when empty so it still reads as "nothing queued to send yet".
 private struct SendButton: View {
-    let enabled: Bool
+    let live: Bool
     let corner: BarCorner
     let action: () -> Void
 
@@ -189,12 +213,11 @@ private struct SendButton: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: BarButtonGeometry.minHeight)
-                .barButtonBackground(corner: corner, fill: Color.pinch.opacity(enabled ? 1.0 : 0.4))
+                .barButtonBackground(corner: corner, fill: Color.pinch.opacity(live ? 1.0 : 0.4))
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
         .handGestureShortcut(.primaryAction)
-        .accessibilityLabel("Send")
+        .accessibilityLabel(live ? "Send" : "Dictate")
     }
 }
 

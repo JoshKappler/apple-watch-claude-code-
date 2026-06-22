@@ -16,7 +16,14 @@ import AVFoundation
 final class Speaker: NSObject, ObservableObject {
 
     /// User toggle (persisted by the view via @AppStorage and pushed in here).
+    /// Mutes the AUDIO only — the haptic still fires so you feel the readback.
     @Published var isMuted = false
+
+    /// Master TTS on/off (mirrored from Store.ttsEnabled). When false we do NOTHING —
+    /// no audio AND no haptic — so "TTS off" really is silent. This is the single gate
+    /// every assistant readback passes through; the Store only ever calls speak() for a
+    /// NEW assistant message (deduped at the source), so we don't dedupe again here.
+    @Published var ttsEnabled = true
 
     /// True while audio is actively being spoken — drives the transcript "speaking pulse".
     @Published private(set) var isSpeaking = false
@@ -28,8 +35,11 @@ final class Speaker: NSObject, ObservableObject {
         synth.delegate = self
     }
 
-    /// Speak an assistant message aloud (if unmuted) and ALWAYS fire a haptic.
+    /// Speak an assistant message aloud (if enabled + unmuted) and fire a haptic.
+    /// No-op entirely when TTS is disabled.
     func speak(_ text: String) {
+        guard ttsEnabled else { return }
+
         // The haptic is the reliable channel — fire it whether or not audio is muted/routed.
         Haptics.spoken()
 
@@ -55,6 +65,13 @@ final class Speaker: NSObject, ObservableObject {
     func setMuted(_ muted: Bool) {
         isMuted = muted
         if muted { stop() }
+    }
+
+    /// Master enable/disable for TTS (driven by Store.ttsEnabled). Disabling stops any
+    /// in-progress utterance immediately so toggling off shuts up mid-sentence.
+    func setEnabled(_ enabled: Bool) {
+        ttsEnabled = enabled
+        if !enabled { stop() }
     }
 
     // MARK: - Audio session

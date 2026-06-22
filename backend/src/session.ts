@@ -20,8 +20,10 @@ import { log } from "./log.js";
 import {
   permissionMeta,
   summarizeTool,
+  thinkingConfig,
   type AgentSession,
   type SessionDeps,
+  type ThinkingLevel,
 } from "./sessionTypes.js";
 
 /** Minimal local mirror of the SDK's streaming-input user message shape. */
@@ -93,11 +95,20 @@ export class ClaudeSession implements AgentSession {
   private readonly turns = new UserTurnQueue();
   private readonly abort = new AbortController();
   private mode: PermissionMode;
+  /** Active model id; applied at query creation and via setModel() mid-session. */
+  private model: string;
+  /** Active thinking level; applied via the SDK `thinking` option / setMaxThinkingTokens(). */
+  private thinking: ThinkingLevel;
   // `Query` from the SDK, kept loosely typed so this file never imports SDK types.
+  // Mutating methods are only available in streaming-input mode (which we use).
   private query:
     | (AsyncGenerator<unknown> & {
         interrupt(): Promise<void>;
-        setPermissionMode(mode: PermissionMode): void;
+        setPermissionMode(mode: PermissionMode): Promise<void>;
+        setModel(model?: string): Promise<void>;
+        setMaxThinkingTokens(
+          maxThinkingTokens: number | null,
+        ): Promise<void>;
         close(): void;
       })
     | null = null;
@@ -107,6 +118,8 @@ export class ClaudeSession implements AgentSession {
   constructor(deps: SessionDeps) {
     this.deps = deps;
     this.mode = deps.initialMode;
+    this.model = deps.model;
+    this.thinking = deps.thinking ?? "off";
     this._sessionId = deps.resume;
   }
 
@@ -127,11 +140,21 @@ export class ClaudeSession implements AgentSession {
 
     const options: Record<string, unknown> = {
       cwd: this.deps.cwd,
-      model: this.deps.model,
+      model: this.model,
       systemPrompt: { type: "preset", preset: "claude_code" },
       includePartialMessages: true,
       abortController: this.abort,
       permissionMode: this.mode,
+      // REQUIRED so the session may run in (or switch to) bypassPermissions at all.
+      // Without it the SDK rejects permissionMode:'bypassPermissions' and
+      // setPermissionMode('bypassPermissions') with:
+      //   "Cannot set permission mode to bypassPermissions because the session
+      //    was not launched with --dangerously-skip-permissions"
+      // (sdk.d.ts: Options.allowDangerouslySkipPermissions — "Must be set to true
+      //  when using permissionMode: 'bypassPermissions'").
+      allowDangerouslySkipPermissions: true,
+      // Extended-thinking budget (off/low/medium/high → SDK ThinkingConfig).
+      thinking: thinkingConfig(this.thinking),
     };
     if (this.deps.resume) options.resume = this.deps.resume;
     // bypassPermissions: nothing asks → do NOT wire canUseTool.
@@ -175,10 +198,34 @@ export class ClaudeSession implements AgentSession {
 
   setMode(mode: PermissionMode): void {
     this.mode = mode;
-    try {
-      this.query?.setPermissionMode(mode);
-    } catch (err) {
+    // setPermissionMode returns a Promise; swallow rejections so a failed switch
+    // never crashes the turn. The next query() (resume) also carries the mode.
+    this.query?.setPermissionMode(mode).catch((err) => {
       log.warn({ err }, "setPermissionMode failed");
+    });
+  }
+
+  /**
+   * Apply a new model and/or thinking level. Stored on the session so the NEXT
+   * turn always uses them, and pushed to the live query immediately when one is
+   * running (setModel / setMaxThinkingTokens are streaming-input-only methods).
+   */
+  setConfig(cfg: { model?: string; thinking?: ThinkingLevel }): void {
+    if (cfg.model && cfg.model !== this.model) {
+      this.model = cfg.model;
+      this.query?.setModel(cfg.model).catch((err) => {
+        log.warn({ err }, "setModel failed");
+      });
+    }
+    if (cfg.thinking && cfg.thinking !== this.thinking) {
+      this.thinking = cfg.thinking;
+      const tc = thinkingConfig(this.thinking);
+      // setMaxThinkingTokens(0) disables; any positive value enables that budget.
+      const tokens =
+        tc.type === "enabled" ? (tc.budgetTokens ?? 0) : 0;
+      this.query?.setMaxThinkingTokens(tokens).catch((err) => {
+        log.warn({ err }, "setMaxThinkingTokens failed");
+      });
     }
   }
 

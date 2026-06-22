@@ -13,7 +13,6 @@ struct SettingsView: View {
 
     @AppStorage("pinch.serverURL") private var serverURL = ""
     @AppStorage("pinch.token") private var token = ""
-    @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
     @State private var confirmBypass = false
 
@@ -55,6 +54,28 @@ struct SettingsView: View {
                 }
             }
 
+            // Model + thinking level — bound straight to the store's @Published vars. The state
+            // layer persists these and pushes the config to the backend; the UI only sets them.
+            Section("Model") {
+                Picker("Model", selection: $store.selectedModel) {
+                    ForEach(PinchStore.availableModels, id: \.id) { model in
+                        Text(model.label).tag(model.id)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+
+                Picker("Thinking", selection: $store.thinkingLevel) {
+                    ForEach(ThinkingLevel.allCases, id: \.self) { level in
+                        Text(level.label).tag(level)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+
+                Text("Higher thinking levels let the agent reason longer before answering. Off is fastest.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Pairing") {
                 // Watch TextFields invoke dictation/scribble; paste from the paired phone also works.
                 // Plain TextFields (NOT SecureField) so watchOS doesn't pop the saved-passwords
@@ -87,10 +108,10 @@ struct SettingsView: View {
             }
 
             Section("Audio") {
-                Toggle("Speak responses", isOn: Binding(
-                    get: { !speakerMuted },
-                    set: { speakerMuted = !$0 }
-                ))
+                // TTS readback — bound to the store's @Published flag (the state layer persists it
+                // and decides whether to speak). Replaces the old @AppStorage speakerMuted toggle.
+                Toggle("Speak replies", isOn: $store.ttsEnabled)
+                    .tint(.pinch)
                 Text("Watch TTS can be silent without AirPods/Bluetooth audio. A haptic always fires regardless, so you still feel each reply.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)

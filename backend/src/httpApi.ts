@@ -16,6 +16,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import { srv, PROTOCOL_VERSION } from "@pinch/protocol";
 import { config } from "./config.js";
 import { log } from "./log.js";
@@ -77,6 +78,23 @@ function asString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+/** Model ids the watch may send. Default stays config.model (env PINCH_MODEL). */
+const ModelId = z.enum([
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
+  "claude-fable-5",
+]);
+
+/** Watch-facing thinking level (mapped to an SDK ThinkingConfig in sessionTypes). */
+const ThinkingLevel = z.enum(["off", "low", "medium", "high"]);
+
+/** Optional model + thinking fields shared by POST /api/session and /api/config. */
+const ConfigFields = z.object({
+  model: ModelId.optional(),
+  thinking: ThinkingLevel.optional(),
+});
+
 /** Resolve a ProjectRef for the response (mock skips git lookups). */
 async function projectRef(state: SessionState) {
   return config.mock
@@ -126,6 +144,9 @@ export async function handleApiRequest(
         return true;
       case "POST /api/mode":
         await handleMode(req, res);
+        return true;
+      case "POST /api/config":
+        await handleConfig(req, res);
         return true;
       case "POST /api/cancel":
         await handleCancel(req, res);
@@ -179,16 +200,32 @@ async function handleSession(
   const deviceId = asString(body.deviceId);
   const resumeSessionId = asString(body.resumeSessionId);
 
+  // Optional model/thinking. Invalid values → 400 (don't silently ignore).
+  const cfg = ConfigFields.safeParse(body);
+  if (!cfg.success) {
+    sendJson(res, 400, { error: "bad_config" });
+    return;
+  }
+
   const existing = resumableSession(resumeSessionId, deviceId);
   if (existing) {
     existing.deviceId = deviceId ?? existing.deviceId;
     existing.http = true; // now driven over HTTP
     existing.lastActiveAt = Date.now();
+    // Apply any model/thinking sent alongside the resume to the live session.
+    if (cfg.data.model || cfg.data.thinking) {
+      if (cfg.data.model) existing.model = cfg.data.model;
+      if (cfg.data.thinking) existing.thinking = cfg.data.thinking;
+      existing.agent.setConfig({
+        model: cfg.data.model,
+        thinking: cfg.data.thinking,
+      });
+    }
     sendJson(res, 200, {
       sessionId: existing.sessionId,
       mode: existing.mode,
       project: await projectRef(existing),
-      models: [config.model],
+      models: [existing.model],
       resumed: true,
       protocolVersion: PROTOCOL_VERSION,
     });
@@ -205,12 +242,14 @@ async function handleSession(
     deviceId,
     socket: null,
     http: true,
+    model: cfg.data.model,
+    thinking: cfg.data.thinking,
   });
   sendJson(res, 200, {
     sessionId: state.sessionId,
     mode: state.mode,
     project: await projectRef(state),
-    models: [config.model],
+    models: [state.model],
     resumed: false,
     protocolVersion: PROTOCOL_VERSION,
   });
@@ -234,7 +273,13 @@ async function handlePrompt(
   sendJson(res, 202, { ok: true });
 }
 
-/** GET /api/poll?sessionId=X&cursor=N → buffered events with index >= N. */
+/**
+ * GET /api/poll?sessionId=X&cursor=N → events with index >= N plus the new
+ * high-water `cursor`. `cursor` is the value the client got from its previous
+ * poll; it must be sent back verbatim so each poll returns a strictly newer,
+ * non-overlapping range. A missing/NaN/negative cursor is clamped to 0 (full
+ * replay) — only the very first poll should omit it.
+ */
 function handlePoll(url: URL, res: ServerResponse): void {
   const state = requireSession(
     url.searchParams.get("sessionId") ?? undefined,
@@ -242,11 +287,9 @@ function handlePoll(url: URL, res: ServerResponse): void {
   );
   if (!state) return;
   const cursorParam = url.searchParams.get("cursor");
-  const cursor = cursorParam ? Number.parseInt(cursorParam, 10) : 0;
-  const { cursor: hi, events } = readEvents(
-    state,
-    Number.isFinite(cursor) && cursor >= 0 ? cursor : 0,
-  );
+  const parsed = cursorParam !== null ? Number.parseInt(cursorParam, 10) : 0;
+  const cursor = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  const { cursor: hi, events } = readEvents(state, cursor);
   sendJson(res, 200, { cursor: hi, events });
 }
 
@@ -291,6 +334,35 @@ async function handleMode(
   state.mode = mode;
   state.agent.setMode(mode);
   pushEvent(state, srv.modeChanged(mode));
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * POST /api/config { sessionId, model?, thinking? } → change the live session's
+ * model/thinking. Applies to subsequent turns (and the running query when one is
+ * live). 200 {ok:true} on success, 404 if the session is unknown.
+ */
+async function handleConfig(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = (await readJsonBody(req)) as Record<string, unknown>;
+  const sessionId = asString(body.sessionId);
+  // 404 for an unknown session per spec (requireSession would send 410).
+  const state = sessionId ? sessions.get(sessionId) : undefined;
+  if (!state) {
+    sendJson(res, 404, { error: "session_gone" });
+    return;
+  }
+  const cfg = ConfigFields.safeParse(body);
+  if (!cfg.success) {
+    sendJson(res, 400, { error: "bad_config" });
+    return;
+  }
+  state.lastActiveAt = Date.now();
+  if (cfg.data.model) state.model = cfg.data.model;
+  if (cfg.data.thinking) state.thinking = cfg.data.thinking;
+  state.agent.setConfig({ model: cfg.data.model, thinking: cfg.data.thinking });
   sendJson(res, 200, { ok: true });
 }
 

@@ -74,10 +74,25 @@ final class WSClient: NSObject, @unchecked Sendable {
 
     /// The live agent session id from the last /api/session, used by poll + all sends.
     private var sessionId: String?
-    /// Monotonic poll cursor (high-water mark of events already delivered).
+    /// Monotonic poll cursor: the index we ask the backend for next (`>= cursor`). The
+    /// backend's poll high-water is `nextIndex` (one PAST the last event), so feeding it
+    /// straight back as the next cursor requests only strictly-new events.
     private var pollCursor = 0
+    /// Idempotency high-water: the smallest event index we have NOT yet delivered to the
+    /// Store. Events arrive WITHOUT their index over the wire, so we reconstruct each
+    /// event's index from the returned high-water (the last event's index is `hi - 1`) and
+    /// drop anything `< appliedHighWater`. This makes event-apply idempotent even if the
+    /// backend (whose own dedup is being audited) ever re-sends — the same index can never
+    /// be delivered twice, so a message can never append-or-speak twice on the watch.
+    private var appliedHighWater = 0
     /// The poll loop task — replaces the WS receive loop AND the heartbeat.
     private var pollTask: Task<Void, Never>?
+
+    /// Agent config pushed from the Store. Sent in the /api/session body so the very first
+    /// turn uses them, and re-pushed via /api/config whenever the Store changes them on a
+    /// live session. Defaults match Store's contract defaults.
+    private var model = "claude-opus-4-8"
+    private var thinking = "medium"
 
     /// The agent session to resume on the next /api/session. PERSISTED to UserDefaults so it
     /// survives the watchOS app being suspended-then-killed (the common case: the screen sleeps,
@@ -102,6 +117,19 @@ final class WSClient: NSObject, @unchecked Sendable {
     /// Last underlying error, surfaced in `.failed` so the user can read the real reason
     /// (bad host, timed out, TLS, no route) instead of a generic message.
     private var lastErrorMessage = "unknown error"
+
+    /// Debounce / hysteresis for the connection pill. A single slow or dropped poll is
+    /// normal on the watch's flaky path, so we DON'T flip the UI to disconnected on the
+    /// first failure. We count consecutive poll failures and only surface a degraded state
+    /// after this many in a row; any success resets the counter back to 0.
+    private var consecutivePollFailures = 0
+    private let pollFailureThreshold = 3
+    /// The last state we actually emitted, so we can COALESCE: identical states are never
+    /// re-emitted (stops the pill flapping connected/reconnecting/connected on every tick).
+    private var lastEmittedState: ConnectionState?
+    /// True once the poll loop has degraded to "reconnecting" so we know to announce the
+    /// recovery (a single .ready emission) when polls start succeeding again.
+    private var pollDegraded = false
 
     /// Serial queue that confines all internal state mutation.
     private let queue = DispatchQueue(label: "com.josh.pinch.http")
@@ -199,7 +227,7 @@ final class WSClient: NSObject, @unchecked Sendable {
             Self.logPath(monitor.currentPath, label: "at-session snapshot")
         }
 
-        var body: [String: Any] = ["deviceId": deviceId]
+        var body: [String: Any] = ["deviceId": deviceId, "model": model, "thinking": thinking]
         if let resumeSessionId { body["resumeSessionId"] = resumeSessionId }
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             emit(.failed("Encode error"))
@@ -253,12 +281,15 @@ final class WSClient: NSObject, @unchecked Sendable {
             let resumed = (json["resumed"] as? Bool) ?? false
             NSLog("[PINCH-HTTP] session OK sessionId=%@ resumed=%@", sid, resumed ? "true" : "false")
 
-            // Success → adopt the session, persist it as resume, reset backoff.
+            // Success → adopt the session, persist it as resume, reset backoff + debounce.
             self.sessionId = sid
             self.resumeSessionId = sid
             self.pollCursor = 0
+            self.appliedHighWater = 0
             self.reconnectAttempt = 0
             self.everReachedReady = true
+            self.consecutivePollFailures = 0
+            self.pollDegraded = false
             self.emit(.connected)
             self.emit(.ready)
 
@@ -353,10 +384,10 @@ final class WSClient: NSObject, @unchecked Sendable {
             let nsErr = error as NSError
             NSLog("[PINCH-HTTP] poll error domain=%@ code=%ld desc=%@",
                   nsErr.domain, nsErr.code, nsErr.localizedDescription)
-            // Transient poll error — keep the loop alive; the next tick retries. Only escalate
-            // to reconnect if the loop is repeatedly failing (handled implicitly: a dead session
-            // surfaces as 410 below, and a dropped path will keep erroring harmlessly until the
-            // Store backgrounds us or the path returns).
+            // Transient poll error — keep the loop alive; the next tick retries. Don't flip the
+            // pill to disconnected on the first miss; only surface "reconnecting" after several
+            // consecutive failures (debounce), so a single slow poll can't make it flap.
+            notePollFailure()
             return
         }
 
@@ -382,22 +413,57 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
         guard code == 200 else {
             NSLog("[PINCH-HTTP] poll → %ld (unexpected)", code)
+            notePollFailure()
             return
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             NSLog("[PINCH-HTTP] poll → undecodable body")
+            notePollFailure()
             return
         }
+
+        // A clean 200 with a parseable body == alive. Reset the failure debounce and, if we
+        // had previously degraded to "reconnecting", announce the single recovery (.ready).
+        notePollSuccess()
+
         let highWater = json["cursor"] as? Int
         let rawEvents = (json["events"] as? [Any]) ?? []
 
-        // Decode + deliver each event through the existing ServerMsg decoder on the main actor.
-        for raw in rawEvents {
+        // The backend returns events ordered by index and reports `cursor` = nextIndex (one
+        // PAST the last event), so over the WHOLE returned run the last event's index is
+        // (highWater - 1), the one before (highWater - 2), … and the first raw event's index is
+        // (highWater - rawEvents.count). We index off the RAW array (not the decoded one) so a
+        // skipped/malformed event doesn't shift the indices of the ones after it. This is ring-
+        // buffer safe — it never assumes the run started at our requested cursor. If the backend
+        // omitted a high-water (shouldn't happen) we fall back to our applied mark.
+        let firstRawIndex: Int
+        if let highWater {
+            firstRawIndex = highWater - rawEvents.count
+        } else {
+            firstRawIndex = appliedHighWater
+        }
+
+        for (rawOffset, raw) in rawEvents.enumerated() {
+            let index = firstRawIndex + rawOffset
             guard let eventData = try? JSONSerialization.data(withJSONObject: raw),
                   let msg = try? JSONDecoder().decode(ServerMsg.self, from: eventData) else {
-                continue   // malformed event — skip, don't kill the loop.
+                continue   // malformed event — skip, don't kill the loop (its index is burned).
             }
+            // IDEMPOTENT APPLY: drop anything we've already delivered. The same index can
+            // never reach the Store twice → no double-append, no double-speak.
+            let alreadyApplied: Bool = await withCheckedContinuation { cont in
+                queue.async {
+                    if index < self.appliedHighWater {
+                        cont.resume(returning: true)
+                    } else {
+                        self.appliedHighWater = index + 1
+                        cont.resume(returning: false)
+                    }
+                }
+            }
+            if alreadyApplied { continue }
+
             // Keep resume id fresh if the server re-announces ready over the poll channel.
             if case let .ready(ready) = msg {
                 queue.async { self.resumeSessionId = ready.sessionId }
@@ -405,9 +471,39 @@ final class WSClient: NSObject, @unchecked Sendable {
             await MainActor.run { [weak self] in self?.onMessage?(msg) }
         }
 
-        // Advance cursor to the returned high-water (monotonic).
+        // Advance the poll cursor to the returned high-water (monotonic). Next poll asks for
+        // `index >= highWater`, i.e. only events newer than everything we've now seen.
         if let highWater {
             queue.async { if highWater > self.pollCursor { self.pollCursor = highWater } }
+        }
+    }
+
+    /// Record a failed poll. After `pollFailureThreshold` in a row, surface a single
+    /// `.reconnecting` (deduped by emit's coalescing) so the pill shows a degraded — but not
+    /// dead — state. We DON'T tear the session down; the loop keeps retrying and a later 410
+    /// (session_gone) is the only thing that triggers a real re-create.
+    private func notePollFailure() {
+        queue.async {
+            self.consecutivePollFailures += 1
+            guard self.consecutivePollFailures >= self.pollFailureThreshold else { return }
+            self.pollDegraded = true
+            // Soft "reconnecting" — stays .isAlive so Send still works while the path
+            // recovers. Use a FIXED attempt value so emit()'s coalescing collapses every
+            // subsequent failed tick into nothing (the pill shows "reconnecting" once, not a
+            // ticking counter).
+            self.emit(.reconnecting(attempt: 1))
+        }
+    }
+
+    /// Record a successful poll. Resets the failure debounce, and if we had degraded, emits a
+    /// single `.ready` so the pill flips back to connected exactly once on recovery.
+    private func notePollSuccess() {
+        queue.async {
+            self.consecutivePollFailures = 0
+            if self.pollDegraded {
+                self.pollDegraded = false
+                self.emit(.ready)
+            }
         }
     }
 
@@ -416,6 +512,21 @@ final class WSClient: NSObject, @unchecked Sendable {
     /// Public send — marshals onto `queue` so it's serialized with the session lifecycle.
     func send(_ msg: ClientMsg) {
         queue.async { self.sendRaw(msg) }
+    }
+
+    /// Update the agent config (model + thinking level). Always records the values so the NEXT
+    /// /api/session body carries them; if a session is already live, also pushes them now via
+    /// POST /api/config {sessionId, model, thinking}. `thinking` is the enum rawValue
+    /// ("off"/"low"/"medium"/"high"). Mirrors the send/POST pattern of the other intents.
+    func updateConfig(model: String, thinking: String) {
+        queue.async {
+            self.model = model
+            self.thinking = thinking
+            // Only push to the backend if we have a live session; otherwise the values are
+            // already staged for the next /api/session create.
+            guard self.sessionId != nil else { return }
+            self.postJSON(path: "/api/config", body: ["model": model, "thinking": thinking])
+        }
     }
 
     /// Map each ClientMsg to its HTTP request. All POSTs use dataTask (NOT WebSocketTask).
@@ -567,7 +678,12 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Emit a connection state to the UI, COALESCING identical consecutive states so the pill
+    /// never re-renders (or flaps) on a state that didn't actually change. Assumes it runs on
+    /// `queue` (all callers do), where `lastEmittedState` is confined.
     private func emit(_ state: ConnectionState) {
+        if lastEmittedState == state { return }
+        lastEmittedState = state
         Task { @MainActor [weak self] in self?.onState?(state) }
     }
 

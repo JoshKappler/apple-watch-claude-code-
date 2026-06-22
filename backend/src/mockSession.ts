@@ -11,7 +11,12 @@
  */
 import { srv, type PermissionMode } from "@pinch/protocol";
 import { log } from "./log.js";
-import { renderDiff, type AgentSession, type SessionDeps } from "./sessionTypes.js";
+import {
+  renderDiff,
+  type AgentSession,
+  type SessionDeps,
+  type ThinkingLevel,
+} from "./sessionTypes.js";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -56,6 +61,10 @@ export class MockSession implements AgentSession {
 
   setMode(mode: PermissionMode): void {
     this.mode = mode;
+  }
+
+  setConfig(_cfg: { model?: string; thinking?: ThinkingLevel }): void {
+    // Mock has no real model/thinking; accept and ignore for interface parity.
   }
 
   private async runTurn(prompt: string): Promise<void> {
