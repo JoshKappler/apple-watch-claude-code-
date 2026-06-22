@@ -109,6 +109,20 @@ struct ComposerView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
         }
+        // SWIPE DOWN on the composer (a NON-scrolling surface, so the gesture actually fires —
+        // unlike a swipe over the transcript, whose scroll view swallows it) collapses all chrome.
+        // Disabled while the input is expanded so the editor's own caret/scroll gestures win.
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 14)
+                .onEnded { value in
+                    let dy = value.translation.height
+                    guard abs(dy) > abs(value.translation.width), dy > 14 else { return }
+                    store.chromeCollapsed = true
+                    Haptics.click()
+                },
+            including: expanded ? .subviews : .all
+        )
     }
 
     /// Collapsed chrome (via a swipe-down): EVERYTHING is hidden — the draft box, all three
@@ -123,52 +137,67 @@ struct ComposerView: View {
                 .foregroundStyle(.white)
                 .frame(width: 26, height: 22)
                 .background(Capsule().fill(Color.orange))
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 30)   // taller swipe/tap target
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show controls")
+        // Swipe UP on this bar (a non-scrolling surface) restores the chrome — the symmetric
+        // counterpart to the composer's swipe-down-to-collapse. Tap still works too.
+        .gesture(
+            DragGesture(minimumDistance: 14)
+                .onEnded { value in
+                    let dy = value.translation.height
+                    guard abs(dy) > abs(value.translation.width), dy < -14 else { return }
+                    store.chromeCollapsed = false
+                    Haptics.click()
+                }
+        )
         .padding(.bottom, BarButtonGeometry.bottomGap)
     }
 
     // MARK: - Draft box (orange expand arrow on top + inline editor inside)
 
+    /// The expand chevron only matters when there's text to view/scroll (or we're already
+    /// expanded). When the draft is empty there's nothing to expand, so it's hidden — which also
+    /// keeps it out of the way and lets the chat feed run right down to the input bar.
+    private var showExpandChevron: Bool { expanded || !draftIsEmpty }
+
     private var draftBox: some View {
-        InlineDraftEditor(
-            text: $store.draft,
-            caretIndex: $store.caretIndex,
-            ownsCrown: $store.inputOwnsCrown,
-            mode: editMode
-        )
-        // Expanded: let the editor's ScrollView take all remaining vertical space.
-        .frame(maxHeight: expanded ? .infinity : nil)
+        // Chevron lives INLINE on the right of the text/hint — NOT as a notch on the top border.
+        // That keeps the box's top edge clean so nothing overlaps the transcript above it. It
+        // flips: UP = collapsed (tap to expand + take the crown), DOWN = expanded (tap to collapse).
+        HStack(alignment: .top, spacing: 6) {
+            InlineDraftEditor(
+                text: $store.draft,
+                caretIndex: $store.caretIndex,
+                ownsCrown: $store.inputOwnsCrown,
+                mode: editMode
+            )
+            // Expanded: let the editor's ScrollView take all remaining vertical space.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxHeight: expanded ? .infinity : nil)
+
+            if showExpandChevron {
+                Button { toggleExpand() } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
+            }
+        }
         .padding(.horizontal, 10)
-        .padding(.top, 5)
-        .padding(.bottom, 6)
+        .padding(.vertical, 6)
         .frame(maxHeight: expanded ? .infinity : nil)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.10)))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
-        // The expand/collapse chevron is NESTED into the middle of the box's TOP border line (a
-        // small notch) rather than taking its own row, so the box is only as tall as the text in
-        // it. It FLIPS to signal state: UP = collapsed (tap to expand + take the crown); DOWN =
-        // expanded (tap to collapse + hand the crown back to the chat), so a second press reads as
-        // "this will close it".
-        .overlay(alignment: .top) {
-            Button { toggleExpand() } label: {
-                Image(systemName: expanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 26, height: 16)
-                    .background(Capsule().fill(Color.orange))
-            }
-            .buttonStyle(.plain)
-            .frame(width: 26, height: 16)   // pin the button's layout size to the capsule itself
-            .offset(y: -8)                  // so it straddles the top border line (centered on it)
-            .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
-        }
     }
 
     private var borderColor: Color {
@@ -245,10 +274,10 @@ private struct SendButton: View {
 
     var body: some View {
         Button(action: action) {
-            // Empty draft → show a MIC (a pinch/tap dictates, it does NOT send an empty message);
-            // with text → a paperplane (a pinch/tap sends). Makes the empty-draft pinch read as
-            // "talk", not a dead/!send button.
-            Image(systemName: live ? "paperplane.fill" : "mic.fill")
+            // ALWAYS a paperplane — never a second mic. (There's already a dedicated mic button;
+            // showing a mic here too was confusing.) Dimmed when there's nothing to send. An
+            // empty-draft pinch still opens dictation via primaryAction(), the icon just stays Send.
+            Image(systemName: "paperplane.fill")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: BarButtonGeometry.minHeight)

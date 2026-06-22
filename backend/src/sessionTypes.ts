@@ -16,8 +16,12 @@ import type {
 /** How a session pushes protocol frames back out to the connection. */
 export type SendFn = (msg: ServerMsg) => void;
 
-/** Watch-facing extended-thinking level. The wire values never change. */
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
+/**
+ * Watch-facing reasoning EFFORT level (surfaced in the UI as "Effort", matching the Claude Code
+ * CLI scale). `"off"` is retained for back-compat / internal defaults but the watch only sends
+ * low…max. Each maps to an extended-reasoning token budget in `thinkingConfig`.
+ */
+export type ThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * SDK ThinkingConfig shape (local mirror so this file never imports SDK types).
@@ -28,14 +32,17 @@ export type SdkThinkingConfig =
   | { type: "enabled"; budgetTokens?: number };
 
 /**
- * Map a watch thinking level to the SDK's `thinking` option (Options.thinking,
- * a ThinkingConfig). Budgets:
- *   off    → disabled (no extended thinking)
+ * Map a watch EFFORT level to the SDK's `thinking` option (Options.thinking, a ThinkingConfig).
+ * Budgets escalate across the five CLI effort levels, all kept just under the API's ~32k
+ * extended-thinking ceiling so a high setting can never exceed the limit and fail a turn:
+ *   off    → disabled (no extended thinking; internal default only, not shown on the watch)
  *   low    → 4096
- *   medium → 12000
- *   high   → 31999 (just under the API's 32k extended-thinking ceiling)
- * The SDK also exposes setMaxThinkingTokens(N) for mid-session changes, where
- * 0 disables and any positive value is the budget — we reuse these numbers.
+ *   medium → 10000
+ *   high   → 16000
+ *   xhigh  → 24000
+ *   max    → 31999 (just under the 32k ceiling)
+ * The SDK also exposes setMaxThinkingTokens(N) for mid-session changes, where 0 disables and any
+ * positive value is the budget — we reuse these numbers.
  */
 export function thinkingConfig(level: ThinkingLevel): SdkThinkingConfig {
   switch (level) {
@@ -44,8 +51,12 @@ export function thinkingConfig(level: ThinkingLevel): SdkThinkingConfig {
     case "low":
       return { type: "enabled", budgetTokens: 4096 };
     case "medium":
-      return { type: "enabled", budgetTokens: 12000 };
+      return { type: "enabled", budgetTokens: 10000 };
     case "high":
+      return { type: "enabled", budgetTokens: 16000 };
+    case "xhigh":
+      return { type: "enabled", budgetTokens: 24000 };
+    case "max":
       return { type: "enabled", budgetTokens: 31999 };
   }
 }

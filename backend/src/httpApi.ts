@@ -86,8 +86,8 @@ const ModelId = z.enum([
   "claude-fable-5",
 ]);
 
-/** Watch-facing thinking level (mapped to an SDK ThinkingConfig in sessionTypes). */
-const ThinkingLevel = z.enum(["off", "low", "medium", "high"]);
+/** Watch-facing reasoning effort level (mapped to an SDK ThinkingConfig in sessionTypes). */
+const ThinkingLevel = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 /** Optional model + thinking fields shared by POST /api/session and /api/config. */
 const ConfigFields = z.object({

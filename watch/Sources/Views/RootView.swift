@@ -147,24 +147,12 @@ private struct ConversationScreen: View {
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
         // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
         .ignoresSafeArea(.container, edges: .bottom)
-        // SWIPE TO COLLAPSE — the crown does ALL the scrolling in this app, so a finger swipe is
-        // free to mean "collapse/restore the chrome" instead of "scroll". We use highPriorityGesture
-        // (not simultaneousGesture) so it reliably WINS over the transcript ScrollView's finger-pan
-        // — a simultaneous gesture was being swallowed by the scroll view and never fired. Taps are
-        // untouched (a drag needs minimumDistance to start), and we only act on a clearly-vertical
-        // drag. While the input is EXPANDED we step aside (.subviews) so the draft editor's own
-        // gestures (caret back-swipe, its scroll) keep working; collapse-from-expanded happens via
-        // the chevron or Send instead.
-        .highPriorityGesture(
-            DragGesture(minimumDistance: 18)
-                .onEnded { value in
-                    let dy = value.translation.height
-                    let dx = value.translation.width
-                    guard abs(dy) > abs(dx), abs(dy) > 18 else { return }   // clearly vertical
-                    store.chromeCollapsed = dy > 0   // down → collapse, up → restore
-                },
-            including: store.inputOwnsCrown ? .subviews : .all
-        )
+        // NOTE: the collapse/restore swipe is NOT attached here. A DragGesture on or around the
+        // transcript ScrollView is swallowed by the scroll view's UIKit pan recognizer on watchOS
+        // (it sits below SwiftUI's gesture arbitration, so neither highPriority nor simultaneous
+        // can win it — this was the bug behind 4 failed attempts). The swipe now lives on the
+        // NON-scrolling composer surfaces instead: swipe DOWN on the composer collapses, swipe UP
+        // on the collapsed bar restores (see ComposerView). The crown still scrolls the transcript.
     }
 }
 

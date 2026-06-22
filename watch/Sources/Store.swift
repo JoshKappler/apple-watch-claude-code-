@@ -25,16 +25,19 @@ struct PinchModel: Identifiable, Hashable {
     let label: String
 }
 
-/// Extended-thinking budget. `rawValue` is what we send to the backend ("off"/"low"/...).
+/// Reasoning EFFORT — the same scale the Claude Code terminal CLI exposes (the user-facing label
+/// is "Effort"). `rawValue` is what we send to the backend, which maps each level to an
+/// extended-reasoning budget. Ordered low → max.
 enum ThinkingLevel: String, CaseIterable, Identifiable {
-    case off, low, medium, high
+    case low, medium, high, xhigh, max
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .off: return "Off"
         case .low: return "Low"
         case .medium: return "Medium"
         case .high: return "High"
+        case .xhigh: return "X-High"
+        case .max: return "Max"
         }
     }
 }

@@ -17,6 +17,10 @@ struct SettingsView: View {
     @State private var confirmBypass = false
 
     var body: some View {
+        // Own NavigationStack so the .navigationLink sub-pickers (Model / Effort) push WITHIN the
+        // Settings sheet — backing out of one returns to the Settings list, not all the way out to
+        // the main screen (which is what happened when these links pushed onto the root stack).
+        NavigationStack {
         List {
             // Permission mode — moved here from the bottom bar. Each row calls store.setMode.
             // bypassPermissions keeps the RED styling + a guarded confirmation alert.
@@ -64,14 +68,14 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.navigationLink)
 
-                Picker("Thinking", selection: $store.thinkingLevel) {
+                Picker("Effort", selection: $store.thinkingLevel) {
                     ForEach(ThinkingLevel.allCases, id: \.self) { level in
                         Text(level.label).tag(level)
                     }
                 }
                 .pickerStyle(.navigationLink)
 
-                Text("Thinking sets the agent's extended-reasoning budget — how long it reasons before answering. Higher is more thorough but slower; Off is fastest.")
+                Text("Effort is the agent's reasoning budget — the same scale as the Claude Code terminal CLI. Higher reasons longer and is more thorough but slower; Low is fastest.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -147,6 +151,7 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        }
         .alert("Skip all permissions?", isPresented: $confirmBypass) {
             Button("Cancel", role: .cancel) { }
             Button("Skip permissions", role: .destructive) {

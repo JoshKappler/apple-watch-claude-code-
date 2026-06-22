@@ -79,46 +79,32 @@ struct TranscriptView: View {
 
 // MARK: - Rows
 
+// Both bubbles fill the FULL screen width — no side indentation, no avatar/logo. The screen is
+// tiny; every pixel of width counts. You tell who's speaking by COLOR alone: coral = you, gray =
+// Claude. (The old left spacer on user bubbles and the sparkle on assistant bubbles both stole
+// horizontal space and have been removed.)
 private struct UserBubble: View {
     let text: String
     var body: some View {
-        HStack {
-            Spacer(minLength: 24)
-            Text(text)
-                .font(.system(size: 14))
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color.pinch.opacity(0.9), in: .rect(cornerRadius: 12))
-                .foregroundStyle(.white)
-        }
+        Text(text)
+            .font(.system(size: 14))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Color.pinch.opacity(0.9), in: .rect(cornerRadius: 12))
+            .foregroundStyle(.white)
     }
 }
 
 private struct AssistantBubble: View {
     let text: String
-    let speaking: Bool
+    let speaking: Bool   // retained for call-site compatibility; no longer drawn (no avatar to pulse)
 
     var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            ZStack {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                if speaking {
-                    Circle()
-                        .stroke(Color.blue.opacity(0.6), lineWidth: 1.5)
-                        .frame(width: 18, height: 18)
-                        .scaleEffect(speaking ? 1.25 : 0.8)
-                        .opacity(speaking ? 0 : 1)
-                        .animation(.easeOut(duration: 0.9).repeatForever(autoreverses: false), value: speaking)
-                }
-            }
-            .frame(width: 16)
-            Text(text)
-                .font(.system(size: 14))
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color.gray.opacity(0.22), in: .rect(cornerRadius: 12))
-            Spacer(minLength: 0)
-        }
+        Text(text)
+            .font(.system(size: 14))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Color.gray.opacity(0.22), in: .rect(cornerRadius: 12))
     }
 }
 

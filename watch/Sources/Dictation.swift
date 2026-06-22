@@ -38,7 +38,16 @@ enum Dictation {
         // nil suggestions + .plain biases toward the dictation flow (no suggestion list).
         controller.presentTextInputController(withSuggestions: nil, allowedInputMode: .plain) { results in
             guard let text = results?.first as? String, !text.isEmpty else { return }
-            Task { @MainActor in completion(text) }
+            // Apply the result on the main actor IMMEDIATELY. The WatchKit completion already
+            // fires on the main thread, so we run it inline via assumeIsolated rather than hopping
+            // through `Task { @MainActor in … }`. That hop deferred the draft update behind the
+            // reconnect work that scenePhase → .active kicks off the instant the dictation screen
+            // closes, which showed up as a multi-second delay before the dictated text appeared.
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { completion(text) }
+            } else {
+                DispatchQueue.main.async { completion(text) }
+            }
         }
     }
 }
