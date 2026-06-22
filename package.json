@@ -12,7 +12,8 @@
     "dev": "npm run dev --workspace backend",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "sim": "npm run dev --workspace simulator"
+    "sim": "npm run dev --workspace simulator",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "engines": {
     "node": ">=20"
