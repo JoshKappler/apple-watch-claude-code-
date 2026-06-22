@@ -107,7 +107,9 @@ private struct ContextRing: View {
                     )
                     .rotationEffect(.degrees(-90))   // move the start to 12 o'clock
             }
-            .frame(width: 26, height: 26)
+            // ~30pt sits in the gap between the gear glyph (~22pt) and its button circle
+            // (~37pt): wraps the icon without covering it, and stays inside the button.
+            .frame(width: 30, height: 30)
             .allowsHitTesting(false)
             .animation(.easeOut(duration: 0.4), value: fraction)
         }
