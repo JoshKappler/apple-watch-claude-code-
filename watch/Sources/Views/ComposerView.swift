@@ -19,6 +19,7 @@ import SwiftUI
 struct ComposerView: View {
     @EnvironmentObject private var store: PinchStore
     @State private var showEditor = false
+    @State private var showActions = false
 
     private var connected: Bool {
         if case .ready = store.connection { return true }
@@ -63,18 +64,15 @@ struct ComposerView: View {
 
                 SendButton(enabled: canSend) { sendNow() }
 
-                Menu {
-                    Button("Edit message", systemImage: "character.cursor.ibeam") { showEditor = true }
-                        .disabled(store.draft.isEmpty)
-                    if isBusy {
-                        Button("Cancel turn", systemImage: "stop.circle", role: .destructive) { store.cancel() }
-                    }
-                    Button("Clear", role: .destructive) { store.draft = "" }
+                // watchOS has no `Menu`, so the overflow is a confirmationDialog (action sheet).
+                Button {
+                    showActions = true
                 } label: {
                     Image(systemName: "ellipsis").frame(width: 30, height: 30)
                 }
-                .menuIndicator(.hidden)
+                .buttonStyle(.bordered)
                 .frame(width: 30)
+                .accessibilityLabel("More actions")
             }
             .padding(.horizontal, 6)
             .padding(.bottom, 2)
@@ -82,6 +80,17 @@ struct ComposerView: View {
         .animation(.snappy, value: store.draft.isEmpty)
         .sheet(isPresented: $showEditor) {
             CaretEditorView(text: $store.draft, onSend: { sendNow() })
+        }
+        .confirmationDialog("Actions", isPresented: $showActions, titleVisibility: .hidden) {
+            if !store.draft.isEmpty {
+                Button("Edit message") { showEditor = true }
+            }
+            if isBusy {
+                Button("Cancel turn", role: .destructive) { store.cancel() }
+            }
+            if !store.draft.isEmpty {
+                Button("Clear", role: .destructive) { store.draft = "" }
+            }
         }
     }
 
