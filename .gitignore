@@ -40,6 +40,9 @@ cert.pem
 # Local runtime state
 state/
 sessions/
+# Durable session-resume records (our id → SDK id), written by backend/src/sessionStore.ts
+.pinch-sessions.json
+.pinch-sessions.json.tmp
 
 # Claude Code local runtime artifacts
 .claude/

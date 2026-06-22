@@ -299,20 +299,27 @@ final class WSClient: NSObject, @unchecked Sendable {
             }
 
             let resumed = (json["resumed"] as? Bool) ?? false
-            NSLog("[PINCH-HTTP] session OK sessionId=%@ resumed=%@", sid, resumed ? "true" : "false")
+            // `resetCursor` is set by the backend when it REVIVED this session from its durable
+            // record (process had restarted/swept): the rebuilt event log starts back at index 0,
+            // so our saved cursor is stale and would make us swallow every new event until the
+            // backend's index caught up. Honor it by zeroing the cursor even though resumed==true.
+            let resetCursor = (json["resetCursor"] as? Bool) ?? false
+            NSLog("[PINCH-HTTP] session OK sessionId=%@ resumed=%@ resetCursor=%@",
+                  sid, resumed ? "true" : "false", resetCursor ? "true" : "false")
 
             // Success → adopt the session, persist it as resume, reset backoff + debounce.
             self.sessionId = sid
             self.resumeSessionId = sid
             // CURSOR HANDLING — the fix for duplicate bubbles on reconnect.
-            //   • resumed: the backend kept the SAME session + event log. Its log still holds
-            //     everything we already showed, so starting the cursor at 0 would re-deliver the
-            //     whole history → every assistant bubble appears twice. Instead CONTINUE from the
-            //     last cursor we persisted (survives app relaunch), so we only pull strictly-new
-            //     events. No replay → no duplicates, and your own prompt bubbles (which never live
-            //     in the server log) aren't clobbered by a from-zero rebuild.
-            //   • fresh: a brand-new session has an empty log → start at 0 and reset the mark.
-            if resumed {
+            //   • resumed + log intact (resetCursor=false): the backend kept the SAME session +
+            //     event log, which still holds everything we already showed. Starting the cursor at
+            //     0 would re-deliver the whole history → every assistant bubble appears twice. So
+            //     CONTINUE from the last cursor we persisted (survives app relaunch); we only pull
+            //     strictly-new events. No replay → no duplicates, and your own prompt bubbles (which
+            //     never live in the server log) aren't clobbered by a from-zero rebuild.
+            //   • fresh OR revived-with-empty-log: start at 0 and reset the mark. A fresh session's
+            //     log is empty; a revived session's log was just rebuilt empty — both index from 0.
+            if resumed && !resetCursor {
                 let saved = Self.loadCursor(key: self.resumeCursorKey)
                 self.pollCursor = saved
                 self.appliedHighWater = saved

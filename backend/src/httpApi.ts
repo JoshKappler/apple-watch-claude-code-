@@ -29,6 +29,7 @@ import {
   pushEvent,
   readEvents,
   resumableSession,
+  reviveSession,
   sessions,
   type SessionState,
 } from "./sessionRegistry.js";
@@ -207,7 +208,14 @@ async function handleSession(
     return;
   }
 
-  const existing = resumableSession(resumeSessionId, deviceId);
+  // Resume order: first try the live in-memory session; if it's gone (backend restarted or the
+  // idle sweep retired it), try to REVIVE it from the durable record so Claude keeps its context.
+  let existing = resumableSession(resumeSessionId, deviceId);
+  let revived = false;
+  if (!existing && resumeSessionId) {
+    existing = reviveSession(resumeSessionId, deviceId);
+    revived = existing !== null;
+  }
   if (existing) {
     existing.deviceId = deviceId ?? existing.deviceId;
     existing.http = true; // now driven over HTTP
@@ -221,12 +229,22 @@ async function handleSession(
         thinking: cfg.data.thinking,
       });
     }
+    if (revived) {
+      // Drop a breadcrumb the watch can show. Index starts at 0 in the fresh log, which is
+      // exactly why we must tell the client to reset its cursor (below) — otherwise its stale,
+      // higher cursor would swallow every new event until our index caught back up to it.
+      pushEvent(existing, srv.notice("info", "Reconnected — context restored."));
+    }
     sendJson(res, 200, {
       sessionId: existing.sessionId,
       mode: existing.mode,
       project: await projectRef(existing),
       models: [existing.model],
       resumed: true,
+      // On a revive the event log was rebuilt empty, so the client must reset its poll cursor to
+      // 0. On a normal in-memory resume the log is intact → keep the client's saved cursor (no
+      // replay, no duplicate bubbles).
+      resetCursor: revived,
       protocolVersion: PROTOCOL_VERSION,
     });
     return;
@@ -251,6 +269,7 @@ async function handleSession(
     project: await projectRef(state),
     models: [state.model],
     resumed: false,
+    resetCursor: false, // brand-new session: the watch zeroes its cursor on resumed:false anyway
     protocolVersion: PROTOCOL_VERSION,
   });
 }

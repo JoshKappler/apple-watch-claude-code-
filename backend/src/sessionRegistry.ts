@@ -33,6 +33,7 @@ import { createMockSession } from "./mockSession.js";
 // session.js imports the SDK only lazily (inside start()), so importing the
 // factory here does NOT pull the SDK in at module scope.
 import { createClaudeSession } from "./session.js";
+import { getSessionRecord, saveSessionRecord } from "./sessionStore.js";
 
 /** Max buffered events retained per session (ring buffer / replay window). */
 export const EVENT_BUFFER_LIMIT = 500;
@@ -146,6 +147,7 @@ export function attachAgent(
   state: SessionState,
   project: Project,
   mode: PermissionMode,
+  resume?: string,
 ): void {
   const approvals = new ApprovalRegistry();
   state.approvals = approvals;
@@ -158,14 +160,85 @@ export function attachAgent(
     cwd: project.root,
     model: state.model,
     thinking: state.thinking,
+    // Set only on REVIVE: hands the SDK the prior conversation's id so it reloads that
+    // transcript from disk and Claude keeps its full context across a backend restart/sweep.
+    resume,
     initialMode: mode,
     onSessionId: (sdkId) => {
       // Map the SDK's own session id alongside ours so resume:sdkId works.
       if (sdkId && !sessions.has(sdkId)) sessions.set(sdkId, state);
+      // Durably remember {our id → SDK id + project/model/thinking/mode/device}. This is the
+      // ONLY thing that survives a process restart, so it's what lets a reconnecting watch
+      // revive this exact conversation instead of getting a blank, context-free session.
+      saveSessionRecord({
+        ourId: state.sessionId,
+        sdkId,
+        projectId: state.project.id,
+        model: state.model,
+        thinking: state.thinking,
+        mode: state.mode,
+        deviceId: state.deviceId,
+        updatedAt: Date.now(),
+      });
     },
   };
 
   state.agent = config.mock ? createMockSession(deps) : createClaudeSession(deps);
+}
+
+/**
+ * REVIVE a session that's no longer in memory (backend restarted, or it was swept) using its
+ * durable record. Rebuilds a SessionState under the SAME session id with a fresh event log, and
+ * wires an agent that RESUMES the SDK transcript (so context is preserved). Returns null if there's
+ * no record, the device doesn't match, or the project is gone — in which case the caller falls
+ * back to creating a brand-new session. The agent itself stays lazy (no SDK load until a prompt),
+ * so reviving an idle session is cheap.
+ */
+export function reviveSession(
+  ourId: string,
+  deviceId: string | undefined,
+): SessionState | null {
+  const rec = getSessionRecord(ourId);
+  if (!rec) return null;
+  // Same deviceId binding as resumableSession: a leaked id can't be revived onto another device.
+  const deviceOk = rec.deviceId === undefined || rec.deviceId === deviceId;
+  if (!deviceOk) {
+    log.warn(
+      { ourId, recDevice: rec.deviceId, reqDevice: deviceId },
+      "revive denied: deviceId mismatch",
+    );
+    return null;
+  }
+  // The SDK keys transcripts by cwd, so we MUST restore the same project to resume correctly.
+  const project = projectRegistry.get(rec.projectId);
+  if (!project) {
+    log.warn({ ourId, projectId: rec.projectId }, "revive failed: project no longer available");
+    return null;
+  }
+
+  const state: SessionState = {
+    sessionId: rec.ourId,
+    agent: undefined as unknown as AgentSession, // set by attachAgent
+    approvals: undefined as unknown as ApprovalRegistry, // set by attachAgent
+    project,
+    mode: rec.mode,
+    model: rec.model,
+    thinking: rec.thinking,
+    eventLog: [],
+    nextIndex: 0,
+    socket: null,
+    deviceId: deviceId ?? rec.deviceId,
+    lastActiveAt: Date.now(),
+    http: true,
+  };
+
+  attachAgent(state, project, rec.mode, rec.sdkId);
+  sessions.set(rec.ourId, state);
+  log.info(
+    { ourId, sdkId: rec.sdkId, projectId: rec.projectId },
+    "revived session from durable record",
+  );
+  return state;
 }
 
 /**
