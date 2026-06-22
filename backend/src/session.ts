@@ -190,13 +190,15 @@ export class ClaudeSession implements AgentSession {
       opts: { signal: AbortSignal; toolUseID: string },
     ): Promise<PermissionResult> => {
       // acceptEdits: auto-approve edits/writes; everything else still asks.
+      // NOTE: an "allow" MUST echo back `updatedInput` — without it the SDK runs
+      // the tool with empty input and the Edit/Write silently fails.
       if (
         this.mode === "acceptEdits" &&
         (toolName === "Edit" ||
           toolName === "MultiEdit" ||
           toolName === "Write")
       ) {
-        return { behavior: "allow" };
+        return { behavior: "allow", updatedInput: input };
       }
 
       const meta = permissionMeta(toolName, input);
@@ -235,7 +237,11 @@ export class ClaudeSession implements AgentSession {
       });
 
       const decided = wait.then<PermissionResult>((outcome) => {
-        if (outcome.decision === "allow") return { behavior: "allow" };
+        // `updatedInput: input` is REQUIRED — an allow without it makes the SDK
+        // run the tool with empty input, so Edit/Write/Bash silently no-op.
+        if (outcome.decision === "allow") {
+          return { behavior: "allow", updatedInput: input };
+        }
         return {
           behavior: "deny",
           message: outcome.note ?? "Denied on the watch.",
