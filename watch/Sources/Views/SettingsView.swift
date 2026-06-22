@@ -14,7 +14,6 @@ struct SettingsView: View {
     @AppStorage("pinch.serverURL") private var serverURL = ""
     @AppStorage("pinch.token") private var token = ""
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
-    @AppStorage("pinch.showSendButton") private var showSendButton = false
 
     var body: some View {
         List {
@@ -62,10 +61,6 @@ struct SettingsView: View {
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 12))
                 }
-                Toggle("Show on-screen Send", isOn: $showSendButton)
-                Text("Double pinch sends by default. Turn this on to also show a Send button — needed in the Simulator (double pinch doesn't fire there) and on watches without Double Tap.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
                 Text(DoubleTap.detail)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)

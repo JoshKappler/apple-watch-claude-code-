@@ -65,6 +65,7 @@ private struct ConversationScreen: View {
                 .frame(maxHeight: .infinity)
             ComposerView()                 // fixed bottom bar — holds the .primaryAction Send.
         }
+        .ignoresSafeArea(.container, edges: .bottom)   // composer hugs the rounded bottom edge
     }
 }
 

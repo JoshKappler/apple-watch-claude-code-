@@ -60,6 +60,8 @@ final class PinchStore: ObservableObject {
     // Mode + projects.
     @Published var mode: PermissionMode = .default
     @Published var projects: [ProjectRef] = []
+    @Published var projectsLoading = false
+    private var wantProjects = false   // re-request once `ready` if asked before the socket was up
 
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
@@ -177,7 +179,12 @@ final class PinchStore: ObservableObject {
     }
 
     func listProjects() {
-        ws?.send(.listProjects)
+        projectsLoading = true
+        if case .ready = connection {
+            ws?.send(.listProjects)
+        } else {
+            wantProjects = true   // socket not ready yet — fire as soon as `ready` lands
+        }
     }
 
     func selectProject(_ project: ProjectRef) {
@@ -204,9 +211,15 @@ final class PinchStore: ObservableObject {
             if ready.resumed {
                 appendNotice("Reconnected — session resumed.", warn: false)
             }
+            if wantProjects {
+                wantProjects = false
+                ws?.send(.listProjects)
+            }
 
         case let .projects(list):
             projects = list
+            projectsLoading = false
+            wantProjects = false
 
         case let .status(state, _):
             agentState = state

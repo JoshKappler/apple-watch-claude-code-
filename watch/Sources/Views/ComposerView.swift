@@ -22,7 +22,6 @@ import SwiftUI
 
 struct ComposerView: View {
     @EnvironmentObject private var store: PinchStore
-    @AppStorage("pinch.showSendButton") private var showSendButton = false
     @State private var showEditor = false
     @State private var showActions = false
     @State private var showModes = false
@@ -43,19 +42,26 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            // Draft preview — tap to open the crown-cursor editor.
-            if !store.draft.isEmpty {
-                Button { showEditor = true } label: {
-                    Text(store.draft)
-                        .font(.system(size: 12))
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 8)
-                .transition(.opacity)
+            // Draft input box — a clear "chat box" holding the dictated/typed message, ready
+            // to send. Always visible (persistent CLI-style prompt) so dictated text never
+            // looks "lost". Tap to open the crown-cursor editor.
+            Button { showEditor = true } label: {
+                Text(store.draft.isEmpty ? "Tap mic to dictate…" : store.draft)
+                    .font(.system(size: 14))
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(store.draft.isEmpty ? .secondary : .primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.10)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(store.draft.isEmpty ? Color.white.opacity(0.15) : Color.pinch.opacity(0.7), lineWidth: 1)
+                    )
             }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 6)
 
             HStack(spacing: 6) {
                 // Mic → Apple system dictation (same path the Action button uses).
@@ -63,18 +69,10 @@ struct ComposerView: View {
                     Dictation.present { store.appendDictated($0) }
                 }
 
-                // Send: visible only when enabled in Settings; otherwise a hidden carrier
-                // keeps double pinch working. Exactly one primary action exists at a time.
-                if showSendButton {
-                    SendButton(enabled: canSend) { sendNow() }
-                } else {
-                    Button(action: sendNow) { Color.clear }
-                        .frame(width: 0, height: 0)
-                        .opacity(0)
-                        .disabled(!canSend)
-                        .handGestureShortcut(.primaryAction)   // double pinch → send
-                        .accessibilityHidden(true)
-                }
+                // Send is ALWAYS visible: watchOS Double Tap (double pinch) only binds to a
+                // VISIBLE, enabled primary-action button. A hidden 0×0 carrier isn't eligible —
+                // that's what triggered the "no primary action" error. This is the one target.
+                SendButton(enabled: canSend) { sendNow() }
 
                 // Mode (default / acceptEdits / plan / bypass). Red when bypass is armed.
                 iconButton(store.mode.symbol,
@@ -96,6 +94,7 @@ struct ComposerView: View {
             }
             .padding(.horizontal, 6)
         }
+        .padding(.bottom, 2)
         .animation(.snappy, value: store.draft.isEmpty)
         .sheet(isPresented: $showEditor) {
             CaretEditorView(text: $store.draft, onSend: { sendNow() })

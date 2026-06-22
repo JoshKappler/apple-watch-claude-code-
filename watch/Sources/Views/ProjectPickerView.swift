@@ -14,12 +14,18 @@ struct ProjectPickerView: View {
     var body: some View {
         VStack(spacing: 6) {
             if store.projects.isEmpty {
-                HStack(spacing: 6) {
-                    ProgressView()
-                    Text("Loading projects…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 6) {
+                    if store.projectsLoading {
+                        ProgressView()
+                        Text("Loading projects…")
+                    } else {
+                        Image(systemName: "folder.badge.questionmark")
+                            .font(.system(size: 22))
+                        Text("No projects configured")
+                    }
                 }
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
                 .frame(maxHeight: .infinity)
             } else {
                 Text("Project · turn crown, pause to pick")

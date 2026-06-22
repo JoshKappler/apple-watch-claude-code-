@@ -193,10 +193,10 @@ private struct ThinkingIndicator: View {
 private struct EmptyHint: View {
     var body: some View {
         VStack(spacing: 4) {
-            Image(systemName: "mic.circle")
-                .font(.system(size: 28))
-                .foregroundStyle(Color.pinch)
-            Text("Tap the mic to dictate.")
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 24))
+                .foregroundStyle(.secondary)
+            Text("No messages yet.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
