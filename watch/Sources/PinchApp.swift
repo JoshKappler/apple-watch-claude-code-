@@ -21,19 +21,20 @@ struct PinchApp: App {
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
     init() {
-        // Pre-fill pairing so there is NOTHING to type on the watch.
-        let liveURL = "wss://portfolio-auctions-plasma-induced.trycloudflare.com"
-        let liveToken = "***ROTATED-TOKEN-REMOVED***"
+        // Pre-fill pairing so there is NOTHING to type on the watch. The URL + token live in
+        // Secrets.swift, which is GITIGNORED — the token is an RCE password and must never be
+        // committed. Copy watch/Secrets.example.swift → watch/Sources/Secrets.swift (or run
+        // ./setup.sh, which does it and injects PINCH_TOKEN from backend/.env).
         let defaults = UserDefaults.standard
-        defaults.register(defaults: ["pinch.serverURL": liveURL, "pinch.token": liveToken])
+        defaults.register(defaults: ["pinch.serverURL": Secrets.serverURL, "pinch.token": Secrets.token])
 
         // TEMP (dev phase): the quick-tunnel URL changes between sessions, and a value an
         // earlier build wrote to UserDefaults would override register(defaults:) and strand the
         // watch on a DEAD old tunnel (symptom: "Connecting…" forever, nothing in the backend
         // log). Force the live values every launch so a stale stored URL can't do that. Remove
         // this force-write once we move to a permanent tunnel and let the user own the setting.
-        defaults.set(liveURL, forKey: "pinch.serverURL")
-        defaults.set(liveToken, forKey: "pinch.token")
+        defaults.set(Secrets.serverURL, forKey: "pinch.serverURL")
+        defaults.set(Secrets.token, forKey: "pinch.token")
     }
 
     var body: some Scene {

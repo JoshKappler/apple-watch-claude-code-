@@ -89,8 +89,37 @@ else
 fi
 echo
 
-# --- 4. reminders -----------------------------------------------------------
-bold "4. Still needed in backend/.env"
+# --- 4. watch pairing secret (gitignored) -----------------------------------
+bold "4. Watch pairing secret (watch/Sources/Secrets.swift)"
+SECRETS_EXAMPLE="$REPO_ROOT/watch/Secrets.example.swift"
+SECRETS_FILE="$REPO_ROOT/watch/Sources/Secrets.swift"
+if [[ -f "$SECRETS_FILE" ]]; then
+  ok "watch/Sources/Secrets.swift already exists — leaving it untouched."
+elif [[ -f "$SECRETS_EXAMPLE" ]]; then
+  cp "$SECRETS_EXAMPLE" "$SECRETS_FILE"
+  # Inject PINCH_TOKEN from .env so the new Secrets.swift is ready to build.
+  if [[ -f "$ENV_FILE" ]]; then
+    tok="$(grep -E '^PINCH_TOKEN=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
+    if [[ -n "${tok//[[:space:]]/}" ]]; then
+      tmp="$(mktemp)"
+      # shellcheck disable=SC2016
+      awk -v tok="$tok" '
+        /static let token =/ { print "    static let token = \"" tok "\""; next }
+        { print }
+      ' "$SECRETS_FILE" > "$tmp" && mv "$tmp" "$SECRETS_FILE"
+      ok "Created watch/Sources/Secrets.swift (gitignored) with PINCH_TOKEN filled in."
+    else
+      ok "Created watch/Sources/Secrets.swift (gitignored)."
+    fi
+  fi
+  info "Edit serverURL in it to your tunnel URL (pinch-up.sh prints one)."
+else
+  warn "watch/Secrets.example.swift not found; cannot create Secrets.swift."
+fi
+echo
+
+# --- 5. reminders -----------------------------------------------------------
+bold "5. Still needed in backend/.env"
 info "ANTHROPIC_API_KEY=...      (or use PINCH_AUTH=subscription, the default)"
 info "PINCH_PROJECT_ROOTS=...    (a parent dir to scan, e.g. ~/Desktop/projects —"
 info "                            every child repo shows up on the watch)"
