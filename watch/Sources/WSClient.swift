@@ -750,11 +750,13 @@ final class WSClient: NSObject, @unchecked Sendable {
     private func enqueueLocked(id: String, text: String) {
         outbox.append(OutboxItem(id: id, text: text))
         // Hard cap so an extended outage can't grow the outbox without bound. If we overflow,
-        // DEAD-LETTER the oldest (longest-failing) prompts — flip their bubbles to "Not sent" so a
-        // dropped message is visible, never silently gone.
+        // DEAD-LETTER the oldest QUEUED prompt — flip its bubble to "Not sent" so a dropped message
+        // is visible, never silently gone. Skip the in-flight head: removing the item whose POST is
+        // running would spawn a concurrent send and flicker its bubble failed↔sent. (At most one
+        // item is ever in flight, so a droppable one always exists once count > 50.)
         while outbox.count > 50 {
-            let dropped = outbox.removeFirst()
-            inflight.remove(dropped.id)
+            guard let dropIdx = outbox.firstIndex(where: { !inflight.contains($0.id) }) else { break }
+            let dropped = outbox.remove(at: dropIdx)
             reportDelivery(dropped.id, delivered: false)
         }
         persistOutbox()
@@ -791,6 +793,7 @@ final class WSClient: NSObject, @unchecked Sendable {
                   "sessionId": sessionId, "promptId": item.id, "text": item.text,
               ]) else {
             inflight.remove(item.id)
+            scheduleOutboxRetry()   // don't strand the queue; re-drive shortly (openSession also redrains)
             return
         }
         var req = URLRequest(url: url)
