@@ -9,13 +9,17 @@
 //
 //  SEND is the hardware DOUBLE PINCH (`.handGestureShortcut(.primaryAction)`, Series 9 /
 //  Ultra 2+). The Send button is ALWAYS visible and stays ENABLED whenever there's a draft and
-//  the socket is alive.
+//  the socket is alive. The pinch MOVES between buttons by mode: in caret-EDIT mode it sits on the
+//  MIC (a pinch dictates at the caret — keep talking out your edit), everywhere else it sits on
+//  SEND. So a double-pinch only SENDS when you're not editing and there's text; on an empty draft
+//  it opens the mic.
 //
 //  Bottom bar = exactly 3 buttons: [edit] [mic] [send].
 //    • EDIT (pencil, left)  → expands the draft box + crown MOVES THE CARET (+ back-swipe deletes
 //      a word). Inline — NO sheet. See InlineDraftEditor.
-//    • MIC  (mic.fill, mid, coral) → Apple system dictation → store.appendDictated.
-//    • SEND (paperplane, right) → send + double-pinch.
+//    • MIC  (mic.fill, mid, coral) → Apple system dictation → store.dictateAtCaret. Owns the
+//      double-pinch WHILE in edit mode.
+//    • SEND (paperplane, right) → send; owns the double-pinch EXCEPT in edit mode.
 //  Mode/permissions moved to Settings (top section). Projects + the connection dot live in the
 //  top toolbar (RootView).
 //
@@ -35,6 +39,10 @@ struct ComposerView: View {
     private var expanded: Bool { store.inputOwnsCrown }
     /// edit (caret) vs scroll, set by which control opened the expansion.
     @State private var editMode: InlineEditMode = .scroll
+
+    /// True only while the caret editor is active (expanded AND in caret-edit mode). In this state
+    /// the double-pinch dictates instead of sending — see the mic/send handGestureShortcut routing.
+    private var inEditMode: Bool { expanded && editMode == .edit }
 
     /// True when the draft has nothing to send (trimmed empty).
     private var draftIsEmpty: Bool {
@@ -60,9 +68,11 @@ struct ComposerView: View {
         store.connection.isAlive && !draftIsEmpty
     }
 
-    /// The Send button's tap AND the hardware double-pinch route through here: with text it sends,
-    /// empty it opens dictation (same call the mic button uses). So a double-pinch on an empty
-    /// draft starts talking; with a draft it ships.
+    /// The Send button's tap routes through here: with text it sends, empty it opens dictation.
+    /// The hardware double-pinch is the `.primaryAction`, but WHICH button carries it depends on
+    /// mode: in caret-edit mode the pinch is on the MIC (dictate at the caret — keep talking out
+    /// your edit), everywhere else it's on SEND (so a pinch ships a ready draft, or opens the mic
+    /// on an empty one). So the pinch only SENDS when you're not editing and there's text.
     private func primaryAction() {
         if draftIsEmpty {
             Dictation.present { store.dictateAtCaret($0) }
@@ -119,6 +129,8 @@ struct ComposerView: View {
                 }
 
                 // MIC — the primary input. Coral-tinted. Apple system dictation only here.
+                // In EDIT mode it ALSO carries the double-pinch (.primaryAction) so a pinch
+                // dictates at the caret instead of sending. Disabled elsewhere so Send owns it.
                 BarButton(systemName: "mic.fill",
                           tint: .pinch,
                           label: "Dictate",
@@ -126,11 +138,12 @@ struct ComposerView: View {
                     // Expanded/editing → insert at the caret; collapsed → append to end.
                     Dictation.present { store.dictateAtCaret($0) }
                 }
+                .handGestureShortcut(.primaryAction, isEnabled: inEditMode)
 
-                // SEND — always visible, carries the double-pinch primary action. Outer-right.
-                // `live` only sets the coral fill; the button stays tappable so an empty-draft
-                // pinch/tap opens the mic instead of being a dead control.
-                SendButton(live: canSend, corner: .right) { primaryAction() }
+                // SEND — always visible. Carries the double-pinch primary action EXCEPT in edit
+                // mode (then the mic owns the pinch). `live` only sets the coral fill; the button
+                // stays tappable so an empty-draft pinch/tap opens the mic, not a dead control.
+                SendButton(live: canSend, pinchSends: !inEditMode, corner: .right) { primaryAction() }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
@@ -283,6 +296,10 @@ private struct BarButton: View {
 /// the coral fill — dimmed when empty so it still reads as "nothing queued to send yet".
 private struct SendButton: View {
     let live: Bool
+    /// Whether the hardware double-pinch (.primaryAction) lands on THIS button. False in edit mode,
+    /// where the mic owns the pinch so a pinch dictates instead of sending. The button's TAP always
+    /// works regardless — this only gates the pinch.
+    let pinchSends: Bool
     let corner: BarCorner
     let action: () -> Void
 
@@ -298,7 +315,7 @@ private struct SendButton: View {
                 .barButtonBackground(corner: corner, fill: Color.pinch.opacity(live ? 1.0 : 0.55))
         }
         .buttonStyle(.plain)
-        .handGestureShortcut(.primaryAction)
+        .handGestureShortcut(.primaryAction, isEnabled: pinchSends)
         .accessibilityLabel(live ? "Send" : "Dictate")
     }
 }

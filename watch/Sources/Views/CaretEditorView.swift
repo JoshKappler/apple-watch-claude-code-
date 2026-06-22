@@ -131,8 +131,14 @@ struct InlineDraftEditor: View {
                     proxy.scrollTo(caretAnchorID, anchor: .center)
                 }
             }
-            // Leading back-swipe (←) = delete the previous word.
-            .gesture(
+            // Leading back-swipe (←) = delete the previous word — from ANYWHERE in the box.
+            // contentShape(Rectangle()) makes the WHOLE editor frame hit-testable: without it a
+            // ScrollView only registers touches where its text glyphs are, so a left-swipe only
+            // "worked" when it happened to land on the caret's line (the line with text under your
+            // finger). simultaneousGesture lets the swipe coexist with the scroll/crown instead of
+            // being swallowed by it. The horizontal guard means vertical drags still scroll.
+            .contentShape(Rectangle())
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 30)
                     .onEnded { value in
                         let dx = value.translation.width, dy = value.translation.height

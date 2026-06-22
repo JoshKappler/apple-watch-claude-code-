@@ -18,7 +18,14 @@ struct TranscriptView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                // NON-lazy VStack: a LazyVStack does not measure off-screen rows, so a
+                // programmatic scrollTo("BOTTOM") has to GUESS the height of rows below the
+                // viewport. When the guess runs tall, the scroll lands past the real content —
+                // a full screen of emptiness you have to crank back up from (the "sometimes
+                // scrolls into the void" bug). A plain VStack measures every row, so the bottom
+                // anchor resolves to the true content end. Watch transcripts are short; eager
+                // layout is cheap here and worth the correctness.
+                VStack(alignment: .leading, spacing: 8) {
                     // Persistent connection status — first row, stays visible even with messages.
                     ConnectionPill(state: store.connection,
                                    agent: store.agentState,
@@ -38,7 +45,7 @@ struct TranscriptView: View {
                     // with anchor:.bottom can leave the content's true end above the viewport floor,
                     // which reads as scrollable emptiness. Anchoring to a fixed tail at the very end
                     // pins the real bottom of the content to the viewport bottom every time.
-                    Color.clear.frame(height: 1).id("BOTTOM")
+                    Color.clear.frame(height: 0).id("BOTTOM")
                 }
                 .padding(.horizontal, 6)
                 .padding(.top, 4)
