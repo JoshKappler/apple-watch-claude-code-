@@ -27,17 +27,8 @@ struct TranscriptView: View {
     @State private var following = true
 
     /// How close to the content's bottom (in points) still counts as "at the floor" — a forgiving
-    /// band so you don't have to land on the exact last pixel to re-engage following. Must be ≥
-    /// `crownStep` so the LAST reachable crown detent (which can land up to one step short of the
-    /// true floor) still counts as "at bottom" and re-engages following.
-    private let bottomBand: CGFloat = 36
-
-    /// Points scrolled per crown DETENT. The crown is detented (`by: crownStep`) rather than
-    /// continuous — that's what produces the per-click feel AND lets watchOS play its native crown
-    /// detent haptic on each step. Bigger ⇒ faster (covers more feed per click); paired with
-    /// `.high` sensitivity the detents pack tightly so the chat moves quickly under the thumb.
-    /// Kept just under a short bubble's height so no message is skipped unseen between clicks.
-    private let crownStep: CGFloat = 32
+    /// band so you don't have to land on the exact last pixel to re-engage following.
+    private let bottomBand: CGFloat = 24
 
     // ── CROWN-ONLY SCROLL (no finger scroll) ────────────────────────────────────────────────
     // The ScrollView is `.scrollDisabled(true)`, so the FINGER never scrolls — the crown does it,
@@ -108,15 +99,15 @@ struct TranscriptView: View {
         // Own the crown explicitly so it never goes dead after the composer borrows it.
         .focusable(true)
         .focused($crownFocused)
-        // DETENTED + FAST + CLICKY. `by: crownStep` gives discrete steps (no detents ⇒ nothing for
-        // the OS to click on, the old silent-crown bug); `.high` sensitivity packs those detents
-        // close so a small turn scrolls a lot; `isHapticFeedbackEnabled: true` restores watchOS's
-        // native crown detent tick. That native haptic fires ONLY on physical rotation, never on the
-        // programmatic `crownY = maxScroll` we write while auto-following, so a streaming reply never
-        // machine-guns clicks.
+        // SMOOTH + NATIVE-PACED + SILENT. Continuous (`by: nil`) so there are no detents — the chat
+        // glides like the built-in watchOS ScrollView instead of clicking in chunks — and
+        // `isHapticFeedbackEnabled: false` keeps the crown silent (no tick). `.high` sensitivity sets
+        // the pace: `.medium` here scrolled far too slowly, so `.high` continuous is tuned to match
+        // the native crown's steady-turn speed. (The OS scroll also has spin-to-fling momentum a
+        // position-based binding can't reproduce; this matches the steady pace, not the fling.)
         .digitalCrownRotation($crownY, from: 0, through: Double(max(maxScroll, 1)),
-                              by: Double(crownStep), sensitivity: .high, isContinuous: false,
-                              isHapticFeedbackEnabled: true)
+                              by: nil, sensitivity: .high, isContinuous: false,
+                              isHapticFeedbackEnabled: false)
         // Crown turned: scroll to the new offset. Landing within the bottom band re-engages
         // following (and snaps exactly to the floor); anywhere above breaks away so you can read
         // backscroll while the agent keeps working.
