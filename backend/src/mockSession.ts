@@ -82,6 +82,21 @@ export class MockSession implements AgentSession {
     // Mock has no real model/thinking; accept and ignore for interface parity.
   }
 
+  compact(): void {
+    // Fake the real session's compaction so the watch's Compact button is exercisable end-to-end in
+    // mock mode: shrink the running occupancy, report it, and surface the same notice + clean turn.
+    this.deps.send(srv.status("thinking"));
+    const before = this.contextUsed;
+    this.contextUsed = Math.max(8_000, Math.round(this.contextUsed * 0.3));
+    this.deps.send(
+      srv.context(this.contextUsed, mockContextWindowFor(this.deps.model)),
+    );
+    const pct = before > 0 ? Math.round((1 - this.contextUsed / before) * 100) : 0;
+    this.deps.send(srv.notice("info", `Context compacted — ${pct}% smaller.`));
+    this.deps.send(srv.turnComplete("end_turn"));
+    this.deps.send(srv.status("idle"));
+  }
+
   private async runTurn(prompt: string): Promise<void> {
     if (this.running) {
       // Mirror the real session: queue is implicit; just chain after a beat.

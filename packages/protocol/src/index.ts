@@ -75,6 +75,9 @@ export const SetModeMsg = z.object({
 
 export const CancelMsg = z.object({ type: z.literal("cancel") });
 
+/** Compact the running conversation IN PLACE (summarize context, keep the session). */
+export const CompactMsg = z.object({ type: z.literal("compact") });
+
 export const ListProjectsMsg = z.object({ type: z.literal("list_projects") });
 
 export const SelectProjectMsg = z.object({
@@ -93,6 +96,7 @@ export const ClientMsg = z.discriminatedUnion("type", [
   PermissionDecisionMsg,
   SetModeMsg,
   CancelMsg,
+  CompactMsg,
   ListProjectsMsg,
   SelectProjectMsg,
   PingMsg,

@@ -112,6 +112,12 @@ export interface AgentSession {
   sendFollowUp(text: string): void;
   /** Soft stop the current turn, keep the session alive (q.interrupt). */
   interrupt(): Promise<void>;
+  /**
+   * Compact the conversation IN PLACE — summarize the running context so the window frees up while
+   * the SAME session continues (Claude keeps the summary). Unlike a fresh session (clear context),
+   * the conversation isn't lost. No-op before the first turn — there's nothing to compact yet.
+   */
+  compact(): void;
   /** Hard teardown (abort + close). */
   cancel(): Promise<void>;
   /** Change permission posture mid-session. */

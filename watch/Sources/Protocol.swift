@@ -100,6 +100,7 @@ enum ClientMsg: Encodable, Sendable {
     case permissionDecision(requestId: String, decision: Decision, note: String?, remember: Bool?)
     case setMode(mode: PermissionMode)
     case cancel
+    case compact
     case listProjects
     case selectProject(projectId: String)
     case ping(t: Double?)
@@ -139,6 +140,9 @@ enum ClientMsg: Encodable, Sendable {
 
         case .cancel:
             try c.encode("cancel", forKey: .type)
+
+        case .compact:
+            try c.encode("compact", forKey: .type)
 
         case .listProjects:
             try c.encode("list_projects", forKey: .type)

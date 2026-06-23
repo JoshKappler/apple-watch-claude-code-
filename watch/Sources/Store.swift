@@ -382,6 +382,16 @@ final class PinchStore: ObservableObject {
         ws?.newSession()
     }
 
+    /// Compact context — ask the backend to summarize the running conversation IN PLACE so the
+    /// context window frees up, WITHOUT starting a new session (unlike clearContext). The on-watch
+    /// transcript is kept; the backend streams back a "Compacting…" then "Context compacted" notice
+    /// and a refreshed usage ring when it finishes. Safe to tap mid-conversation — it queues behind
+    /// any in-flight turn.
+    func compactContext() {
+        ws?.send(.compact)
+        Haptics.click()
+    }
+
     /// Clear all "a turn is in progress" state so the thinking indicator + live elapsed timer
     /// stop immediately. Used by cancel() (manual stop) and by clearContext() — anything that
     /// should halt the current turn from the watch's side without waiting on a backend frame.

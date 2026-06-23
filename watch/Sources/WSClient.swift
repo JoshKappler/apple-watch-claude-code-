@@ -767,6 +767,9 @@ final class WSClient: NSObject, @unchecked Sendable {
         case .cancel:
             postJSON(path: "/api/cancel", body: [:])
 
+        case .compact:
+            postJSON(path: "/api/compact", body: [:])
+
         case let .selectProject(projectId):
             postJSON(path: "/api/select-project", body: ["projectId": projectId])
 

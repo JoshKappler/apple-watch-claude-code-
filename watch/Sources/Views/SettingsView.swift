@@ -23,9 +23,14 @@ struct SettingsView: View {
         // the main screen (which is what happened when these links pushed onto the root stack).
         NavigationStack {
         List {
-            // Clear context lives at the TOP — it's the most-used control, so it's one tap from
-            // opening Settings instead of a scroll to the bottom.
+            // Context controls live at the TOP — the most-used section, so they're one tap from
+            // opening Settings instead of a scroll to the bottom. Compact is first and non-destructive:
+            // it's the gentle option that keeps the conversation; the two Clear actions are red.
             Section {
+                Button("Compact context") {
+                    store.compactContext()
+                    dismiss()
+                }
                 Button("Clear context", role: .destructive) {
                     store.clearContext()
                     dismiss()
@@ -34,7 +39,7 @@ struct SettingsView: View {
                     store.clearTranscript()
                     dismiss()
                 }
-                Text("Clear context starts a fresh Claude session — a new conversation with no memory of the previous one. Clear transcript only wipes the on-watch history.")
+                Text("Compact context summarizes the conversation so far to free up the context window while keeping the same session and its memory. Clear context starts a fresh Claude session with no memory of the previous one. Clear transcript only wipes the on-watch history.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }

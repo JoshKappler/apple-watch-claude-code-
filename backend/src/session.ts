@@ -234,6 +234,31 @@ export class ClaudeSession implements AgentSession {
   }
 
   /**
+   * Compact the conversation IN PLACE. Implemented by feeding the `/compact` slash command into the
+   * streaming input: the claude_code preset runs compaction on the live session, summarizing the
+   * history so the context window frees up while the session (and Claude's memory of the summary)
+   * keeps going — unlike clearContext, which spins a brand-new, memory-less session. The SDK emits a
+   * `compact_boundary` system message when it's done (handled in handleCompactBoundary) to surface a
+   * notice + the new usage. The closing `result` frame completes the turn via handleResult.
+   *
+   * No-op before the first turn — there's no context to compact, and starting one just to compact
+   * nothing would be confusing. We tell the watch instead of silently doing nothing.
+   */
+  compact(): void {
+    if (!this.started) {
+      this.deps.send(
+        srv.notice("info", "Nothing to compact yet — send a message first."),
+      );
+      return;
+    }
+    // Follow-up turns don't re-emit a thinking status, so push one ourselves for immediate feedback
+    // (the watch's working indicator + timer key off it; handleResult's idle clears them).
+    this.deps.send(srv.status("thinking"));
+    this.deps.send(srv.notice("info", "Compacting context…"));
+    this.turns.push("/compact");
+  }
+
+  /**
    * The system-prompt append for this session: the static watch-orientation block, plus a soft
    * focus line when a folder hint is set. The agent's cwd is always the project root, so the hint
    * only STEERS it toward one subfolder; it keeps full access to everything under the root.
@@ -428,6 +453,14 @@ The person has set your focus to the "${hint}" directory inside the project root
       return;
     }
 
+    if (
+      type === "system" &&
+      (m as { subtype?: string }).subtype === "compact_boundary"
+    ) {
+      this.handleCompactBoundary(m);
+      return;
+    }
+
     if (type === "assistant") {
       this.handleAssistant(m);
       return;
@@ -556,6 +589,30 @@ The person has set your focus to the "${hint}" directory inside the project root
         srv.toolResult({ id, ok, summary: summarizeResult(block.content) }),
       );
     }
+  }
+
+  /**
+   * The SDK's post-compaction marker (system/compact_boundary). Report how much the window freed
+   * and refresh the usage ring with the new (smaller) occupancy so the watch reflects the compaction
+   * immediately, instead of waiting for the next turn's usage to trickle in.
+   */
+  private handleCompactBoundary(m: Record<string, unknown>): void {
+    const meta = (
+      m as {
+        compact_metadata?: { pre_tokens?: number; post_tokens?: number };
+      }
+    ).compact_metadata;
+    const pre = typeof meta?.pre_tokens === "number" ? meta.pre_tokens : undefined;
+    const post =
+      typeof meta?.post_tokens === "number" ? meta.post_tokens : undefined;
+    if (post !== undefined && post > 0) {
+      this.deps.send(srv.context(post, contextWindowFor(this.model)));
+    }
+    const summary =
+      pre !== undefined && post !== undefined && pre > 0
+        ? `Context compacted — ${Math.round((1 - post / pre) * 100)}% smaller.`
+        : "Context compacted.";
+    this.deps.send(srv.notice("info", summary));
   }
 
   private handleResult(m: Record<string, unknown>): void {

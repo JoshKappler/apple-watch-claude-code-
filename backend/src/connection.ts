@@ -119,6 +119,9 @@ export class Connection {
       case "cancel":
         void this.handleCancel();
         break;
+      case "compact":
+        this.handleCompact();
+        break;
       case "list_projects":
         void this.handleListProjects();
         break;
@@ -264,6 +267,12 @@ export class Connection {
     await state.agent.interrupt();
     pushEvent(state, srv.status("idle"));
     pushEvent(state, srv.turnComplete("cancelled"));
+  }
+
+  private handleCompact(): void {
+    const state = this.state;
+    if (!state) return;
+    state.agent.compact();
   }
 
   private async handleListProjects(): Promise<void> {

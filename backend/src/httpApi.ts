@@ -162,6 +162,9 @@ export async function handleApiRequest(
       case "POST /api/cancel":
         await handleCancel(req, res);
         return true;
+      case "POST /api/compact":
+        await handleCompact(req, res);
+        return true;
       case "POST /api/restart":
         await handleRestart(req, res);
         return true;
@@ -444,6 +447,22 @@ async function handleCancel(
   await state.agent.interrupt();
   pushEvent(state, srv.status("idle"));
   pushEvent(state, srv.turnComplete("cancelled"));
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * POST /api/compact → summarize the running context in place. Keeps the session (and Claude's
+ * memory of the summary) alive, unlike a fresh session; the agent streams back a notice + a
+ * refreshed usage ring via the poll log when compaction finishes.
+ */
+async function handleCompact(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = (await readJsonBody(req)) as Record<string, unknown>;
+  const state = requireSession(asString(body.sessionId), res);
+  if (!state) return;
+  state.agent.compact();
   sendJson(res, 200, { ok: true });
 }
 
