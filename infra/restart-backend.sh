@@ -31,13 +31,28 @@ if ! ( cd "$REPO_ROOT" && npm run build ) >>"$LOG" 2>&1; then
 fi
 say "build OK"
 
-# 2. Build succeeded → stop the old process and wait for it to release the port (~up to 10s).
+# 2. Restart, depending on how the backend is being supervised.
+#
+#    If the always-on LaunchAgent is installed (infra/launchd/), the running
+#    backend IS the launchd job. We must NOT kill+nohup our own copy — launchd
+#    would respawn the one we killed AND we'd start a second, and the two would
+#    fight over the port. Instead let launchd do an atomic kill+relaunch of the
+#    new dist via `kickstart -k`. Falls through to the legacy path otherwise.
+SERVER_LABEL="gui/$(id -u)/com.pinch.server"
+if launchctl print "$SERVER_LABEL" >/dev/null 2>&1; then
+  say "launchd-managed → kickstart -k $SERVER_LABEL"
+  launchctl kickstart -k "$SERVER_LABEL" >>"$LOG" 2>&1 \
+    && say "kickstarted; launchd is relaunching with the new build" \
+    || say "kickstart FAILED — old backend may still be serving"
+  exit 0
+fi
+
+# 2b. Legacy (no LaunchAgent): stop the old process, wait for the port (~up to 10s),
+#     then relaunch detached from backend/ (so dotenv finds backend/.env).
 if [[ -n "$OLD_PID" ]]; then
   kill "$OLD_PID" 2>/dev/null || true
   for _ in $(seq 1 50); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.2; done
 fi
-
-# 3. Relaunch detached from backend/ (so dotenv finds backend/.env), exactly like start-pinch.command.
 cd "$REPO_ROOT/backend"
 nohup "$NODE_BIN" dist/index.js >>"$LOG" 2>&1 &
 say "new backend started (pid=$!) on the same port"

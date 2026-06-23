@@ -61,11 +61,12 @@ infra/
 │   ├── config.example.yml     ← ingress: agent.<yourdomain> → http://localhost:8787 + 404 catch-all
 │   ├── setup-named-tunnel.sh  ← one-time named-tunnel setup
 │   └── README.md              ← named-tunnel walkthrough (scaffolded; unused unless you own a domain)
-├── launchd/
-│   ├── com.pinch.server.plist ← keep the backend alive (restart on crash)
-│   ├── com.pinch.tunnel.plist ← keep the tunnel alive
-│   ├── install-launchd.sh     ← substitute paths, bootstrap into ~/Library/LaunchAgents
-│   └── uninstall-launchd.sh   ← bootout + remove
+├── launchd/                       ← always-on: start at login, restart on crash
+│   ├── com.pinch.server.plist     ← keep the backend alive (restart on crash)
+│   ├── com.pinch.tunnel.plist     ← keep a cloudflared tunnel alive
+│   ├── com.pinch.tunnel.ngrok.plist ← keep an ngrok tunnel alive (recommended path)
+│   ├── install-launchd.sh         ← substitute paths, bootstrap into ~/Library/LaunchAgents
+│   └── uninstall-launchd.sh       ← bootout + remove
 ├── scripts/
 │   ├── gen-token.mjs          ← print a fresh base64url PINCH_TOKEN
 │   └── gen-token.sh           ← wrapper
@@ -78,10 +79,28 @@ infra/
 
 ## Notes
 
-- **Persistence is session-level.** The backend + tunnel run under `nohup` —
-  they survive logout but not a reboot. After a reboot, re-run
-  `start-pinch.command` (the URL stays the same). The `launchd/` agents are an
-  alternative, with a TCC caveat documented there.
+- **Two ways to run, pick one.**
+  - `start-pinch.command` / `pinch-up.sh` — `nohup` or foreground. Survive logout
+    but **not a reboot**, and a crash stays down. Good for a quick session.
+  - `launchd/install-launchd.sh` — **true always-on.** Installs two LaunchAgents
+    (`com.pinch.server` + `com.pinch.tunnel`) that start at login, restart on
+    crash (`KeepAlive` on non-clean exit, throttled 10s), and come back after a
+    reboot. The installer auto-detects the tunnel: a `~/.cloudflared/config.yml`
+    → cloudflared, else `PINCH_NGROK_DOMAIN` in `backend/.env` → ngrok. Force it
+    with `TUNNEL=ngrok` or `TUNNEL=cloudflared`. The reserved domain keeps the
+    watch URL stable across every restart, so the watch never needs reconfiguring.
+    Do **not** also run `start-pinch.command` while the agents are loaded — both
+    would bind `:8787`. Manage it with:
+      ```
+      launchctl print gui/$(id -u)/com.pinch.server | head -20   # status
+      launchctl kickstart -k gui/$(id -u)/com.pinch.server       # reload new build
+      infra/launchd/uninstall-launchd.sh                         # stop + remove
+      ```
+    Reloading after a code change: rebuild (`npm run build --workspace backend`)
+    then `kickstart -k` the server. The watch's own `POST /api/restart` already
+    does this when the agents are installed.
+- **First install may prompt for permissions (TCC).** launchd starting `node`/the
+  tunnel can trigger a one-time macOS permission prompt; approve it.
 - **Idle WebSocket timeout** only affects the simulator's `/ws` path (Cloudflare
   closes idle sockets after ~100s; the app sends a 25s heartbeat). The watch uses
   short HTTP requests, so it isn't subject to a socket idle timeout.

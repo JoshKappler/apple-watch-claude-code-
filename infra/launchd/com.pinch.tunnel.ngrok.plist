@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pinch ngrok Tunnel LaunchAgent template (ngrok variant of com.pinch.tunnel).
+
+  Placeholders (substituted by install-launchd.sh, or edit by hand):
+    __NGROK_BIN__     absolute path to ngrok (e.g. /opt/homebrew/bin/ngrok)
+    __PORT__          local backend port (e.g. 8787)
+    __NGROK_DOMAIN__  reserved ngrok domain, no scheme (e.g. foo.ngrok-free.dev)
+                      → stable wss://<domain>/ws the watch can always reach
+    __NGROK_CONFIG__  absolute path to ngrok.yml (holds the authtoken)
+    __LOG_DIR__       absolute path for logs (e.g. /Users/josh/Library/Logs/pinch)
+
+  Runs: ngrok http <PORT> --url https://<DOMAIN>
+  No secrets here — the authtoken lives in ngrok.yml (chmod 600), not in this
+  world-readable plist. The reserved domain keeps the URL stable across restarts
+  and crashes, so the watch never needs reconfiguring.
+
+  Install with: infra/launchd/install-launchd.sh   (TUNNEL=ngrok)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pinch.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NGROK_BIN__</string>
+        <string>http</string>
+        <string>__PORT__</string>
+        <string>--url=https://__NGROK_DOMAIN__</string>
+        <string>--config=__NGROK_CONFIG__</string>
+        <string>--log=stdout</string>
+        <string>--log-format=logfmt</string>
+    </array>
+
+    <!-- Restart on crash only (not on a clean exit). With the throttle below
+         this avoids tight crash loops. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Start at login/bootstrap. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Minimum seconds between (re)starts. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/tunnel.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/tunnel.err.log</string>
+
+    <!-- Run as a regular user agent (gui domain), never as root/admin. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
