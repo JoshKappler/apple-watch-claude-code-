@@ -4,11 +4,11 @@
 //  Title is risk-colored; the diff (edits) or command (bash) renders in a finger-scrollable
 //  monospace area; a prominent haptic fires on appear.
 //
-//  CONFIRM IS CROWN-DRIVEN. Since watchOS gives apps no crown *press*, the decision uses a
-//  CrownConfirm dial: turn the crown right past the threshold to ALLOW, left to DENY (it
-//  springs back if you stop short). The crown holds focus for the decision, so the diff above
-//  is scrolled with a finger. Tap ✓ / ✗ remain as an explicit shortcut. High-risk requests
-//  need a deliberate, larger crown throw (a higher threshold) so nothing dangerous is casual.
+//  THE DECISION IS TAP-ONLY. It used to be crown-driven (a CrownConfirm dial), but a request can
+//  appear WHILE you're crown-scrolling the chat — and binding crown rotation to allow/deny meant
+//  the in-flight turn could approve or deny by ACCIDENT. Now the crown only scrolls the diff/
+//  command above; you decide with the explicit Allow / Deny buttons. High-risk hides the
+//  "remember" toggle and tints Allow orange so nothing dangerous reads as routine.
 //
 
 import SwiftUI
@@ -55,17 +55,9 @@ struct PermissionCardView: View {
                 .padding(.horizontal, 8)
             }
 
-            // Crown-driven decision. High-risk demands a bigger throw.
-            CrownConfirm(
-                approveTitle: "Allow",
-                denyTitle: "Deny",
-                threshold: request.risk == .high ? 0.9 : 0.7,
-                onApprove: { store.approve(remember: remember) },
-                onDeny: { store.decline() }
-            )
-            .padding(.horizontal, 6)
-
-            tapShortcut
+            // Plain tap decision — the ONLY way to decide. The crown is no longer bound here, so a
+            // request that appears while you're crown-scrolling the chat can't approve/deny itself.
+            decisionButtons
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Opaque, full-screen — this is a takeover gate; the transcript + composer
@@ -95,33 +87,34 @@ struct PermissionCardView: View {
         .padding(.top, 6)
     }
 
-    /// Small tap targets that mirror the crown decision, for when a tap is easier.
-    private var tapShortcut: some View {
+    /// The allow/deny decision — explicit taps, the only way to decide. Deny is red, Allow is green
+    /// (orange for high-risk). No crown binding, so nothing decides by accident.
+    private var decisionButtons: some View {
         HStack(spacing: 8) {
             Button(role: .destructive) {
                 store.decline()
             } label: {
-                Image(systemName: "xmark")
+                Label("Deny", systemImage: "xmark")
                     .frame(maxWidth: .infinity)
-                    .frame(height: 30)
+                    .frame(height: 40)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .tint(.red)
 
             Button {
                 store.approve(remember: remember)
             } label: {
-                Image(systemName: "checkmark")
+                Label("Allow", systemImage: "checkmark")
                     .frame(maxWidth: .infinity)
-                    .frame(height: 30)
+                    .frame(height: 40)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .tint(request.risk == .high ? .orange : .green)
         }
-        .font(.system(size: 13))
+        .labelStyle(.titleAndIcon)
+        .font(.system(size: 14, weight: .semibold))
         .padding(.horizontal, 6)
-        .padding(.bottom, 4)
-        .accessibilityHint("Shortcut for the crown decision above")
+        .padding(.bottom, 6)
     }
 
     private var riskColor: Color {
