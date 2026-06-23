@@ -122,8 +122,16 @@ final class PinchStore: ObservableObject {
     // Permission gate.
     @Published var pendingPermission: ServerMsg.PermissionRequest?
 
-    // Mode + projects.
-    @Published var mode: PermissionMode = .default
+    // Mode + projects. The permission mode is WATCH-OWNED and persisted (UserDefaults), so a choice
+    // like "Skip permissions" survives app relaunches and fresh sessions instead of resetting to
+    // .default every cold start. restoreSettings() loads it in init; the .ready handler re-asserts
+    // it onto the backend session. didSet mirrors the model/thinking/tts persistence pattern.
+    @Published var mode: PermissionMode = .default {
+        didSet {
+            guard oldValue != mode else { return }
+            UserDefaults.standard.set(mode.rawValue, forKey: SettingsKey.mode)
+        }
+    }
     @Published var projects: [ProjectRef] = []
     @Published var projectsLoading = false
     private var wantProjects = false   // re-request once `ready` if asked before the socket was up
@@ -157,11 +165,12 @@ final class PinchStore: ObservableObject {
         PinchModel(id: "claude-fable-5", label: "Fable 5"),
     ]
 
-    // UserDefaults keys for the three persisted settings.
+    // UserDefaults keys for the persisted settings.
     private enum SettingsKey {
         static let model = "pinch.model"
         static let thinking = "pinch.thinking"
         static let tts = "pinch.tts"
+        static let mode = "pinch.mode"
     }
 
     /// Selected API model id. Persisted; pushed to the backend on change when connected.
@@ -209,6 +218,7 @@ final class PinchStore: ObservableObject {
             SettingsKey.model: "claude-opus-4-8",
             SettingsKey.thinking: ThinkingLevel.medium.rawValue,
             SettingsKey.tts: false,
+            SettingsKey.mode: PermissionMode.default.rawValue,
         ])
         // These assignments DO fire didSet, but that's harmless during init: the persist just
         // re-writes the same stored value, and pushConfig() is a no-op while `ws` is still nil
@@ -217,6 +227,9 @@ final class PinchStore: ObservableObject {
         thinkingLevel = ThinkingLevel(rawValue: d.string(forKey: SettingsKey.thinking) ?? "medium") ?? .medium
         ttsEnabled = d.bool(forKey: SettingsKey.tts)
         speaker.setEnabled(ttsEnabled)
+        // Restore the permission mode so the remembered posture (e.g. Skip permissions) is in place
+        // before the first connect; the .ready handler re-asserts it onto the session.
+        mode = PermissionMode(rawValue: d.string(forKey: SettingsKey.mode) ?? PermissionMode.default.rawValue) ?? .default
     }
 
     /// Push the current model + thinking to the backend, but only when a session is live.
@@ -442,7 +455,13 @@ final class PinchStore: ObservableObject {
         switch msg {
         case let .ready(ready):
             sessionId = ready.sessionId
-            mode = ready.mode
+            // Permission mode is watch-owned + persisted: re-assert our remembered mode onto the
+            // (new or resumed) session instead of adopting the backend's default. This is what makes
+            // "Skip permissions" stick across relaunches and fresh sessions. No-op when they match;
+            // the backend confirms with mode_changed either way.
+            if mode != ready.mode {
+                ws?.send(.setMode(mode: mode))
+            }
             currentProject = ready.project
             models = ready.models ?? []
             if ready.resumed {
