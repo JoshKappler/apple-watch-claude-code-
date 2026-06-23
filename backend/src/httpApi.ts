@@ -23,11 +23,12 @@ import { z } from "zod";
 import { srv, PROTOCOL_VERSION } from "@pinch/protocol";
 import { config } from "./config.js";
 import { log } from "./log.js";
-import { projectRegistry } from "./projects.js";
+import { projectRegistry, ROOT_ID } from "./projects.js";
 import {
   attachAgent,
   createSession,
   defaultProject,
+  destroySession,
   ensureSessionSweep,
   pushEvent,
   readEvents,
@@ -36,6 +37,7 @@ import {
   sessions,
   type SessionState,
 } from "./sessionRegistry.js";
+import { deleteSessionRecord } from "./sessionStore.js";
 
 /** Constant-time bearer check (mirrors wsServer's upgrade check). */
 function bearerMatches(header: string | string[] | undefined): boolean {
@@ -99,11 +101,16 @@ const ConfigFields = z.object({
   thinking: ThinkingLevel.optional(),
 });
 
-/** Resolve a ProjectRef for the response (mock skips git lookups). */
+/**
+ * Resolve a ProjectRef for the response (mock skips git lookups). When a soft folder focus is set
+ * we report THAT folder, not the root, so the watch's current-project label reads as the folder the
+ * agent is focused on (even though cwd stays at the root).
+ */
 async function projectRef(state: SessionState) {
+  const p = state.folderHint ?? state.project;
   return config.mock
-    ? { id: state.project.id, name: state.project.name, path: state.project.root }
-    : projectRegistry.toRef(state.project);
+    ? { id: p.id, name: p.name, path: p.root }
+    : projectRegistry.toRef(p);
 }
 
 /**
@@ -163,6 +170,12 @@ export async function handleApiRequest(
         return true;
       case "POST /api/select-project":
         await handleSelectProject(req, res);
+        return true;
+      case "GET /api/agents":
+        handleAgents(url, res);
+        return true;
+      case "POST /api/end-session":
+        await handleEndSession(req, res);
         return true;
       default:
         sendJson(res, 404, { error: "not_found" });
@@ -528,9 +541,67 @@ async function handleSelectProject(
     return;
   }
 
-  // Tear down the old agent, but keep the SAME sessionId + event log so the
-  // client's poll cursor and id stay valid: swap the project + agent in place.
+  // New model: selecting a project does NOT change cwd. The agent stays rooted at the project root
+  // (so it keeps access to every folder and its SDK transcript key — keyed by cwd — is stable);
+  // the selection only sets a SOFT focus hint appended to the system prompt. Selecting the root id
+  // clears the hint. Re-attach the agent in place (same sessionId + event log) RESUMING the SDK
+  // transcript so the conversation/context is preserved across the swap.
+  const isRoot = project.id === ROOT_ID;
+  const folderHint = isRoot ? undefined : project;
+  const resume = state.agent.sessionId;
   await state.agent.cancel();
-  attachAgent(state, project, state.mode);
+  attachAgent(state, state.project, state.mode, resume, folderHint);
+  pushEvent(
+    state,
+    srv.notice(
+      "info",
+      isRoot
+        ? "Focus cleared — working across the whole root."
+        : `Now focused on ${project.name}.`,
+    ),
+  );
+  sendJson(res, 200, { ok: true });
+}
+
+/**
+ * GET /api/agents?deviceId=X → the live sessions this device owns, so the watch can render its
+ * agent switcher and reconcile which of its known agents are still alive on the backend. Each
+ * SessionState is reachable under two keys (our id + the SDK id), so we de-dupe by sessionId.
+ */
+function handleAgents(url: URL, res: ServerResponse): void {
+  const deviceId = url.searchParams.get("deviceId") ?? undefined;
+  const seen = new Set<string>();
+  const agents: Array<{ sessionId: string; label: string }> = [];
+  for (const state of sessions.values()) {
+    if (seen.has(state.sessionId)) continue;
+    seen.add(state.sessionId);
+    // Only this device's sessions (legacy sessions with no recorded device are shown to anyone).
+    if (deviceId && state.deviceId && state.deviceId !== deviceId) continue;
+    agents.push({
+      sessionId: state.sessionId,
+      label: (state.folderHint ?? state.project).name,
+    });
+  }
+  sendJson(res, 200, { agents });
+}
+
+/**
+ * POST /api/end-session { sessionId } → permanently tear down ONE agent session (the watch removed
+ * it from its switcher). Cancels the live agent, drops it from the registry, and forgets its
+ * durable record so it can't be revived. Idempotent: an already-gone session is still a 200.
+ */
+async function handleEndSession(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = (await readJsonBody(req)) as Record<string, unknown>;
+  const sessionId = asString(body.sessionId);
+  const state = sessionId ? sessions.get(sessionId) : undefined;
+  if (state) {
+    const ourId = state.sessionId;
+    destroySession(state);
+    deleteSessionRecord(ourId);
+    log.info({ sessionId: ourId }, "ended session at watch request");
+  }
   sendJson(res, 200, { ok: true });
 }

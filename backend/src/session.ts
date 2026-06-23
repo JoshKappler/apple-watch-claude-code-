@@ -184,7 +184,7 @@ export class ClaudeSession implements AgentSession {
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: WATCH_SYSTEM_APPEND,
+        append: this.systemAppend(),
       },
       includePartialMessages: true,
       abortController: this.abort,
@@ -225,6 +225,19 @@ export class ClaudeSession implements AgentSession {
 
   sendFollowUp(text: string): void {
     this.turns.push(text);
+  }
+
+  /**
+   * The system-prompt append for this session: the static watch-orientation block, plus a soft
+   * focus line when a folder hint is set. The agent's cwd is always the project root, so the hint
+   * only STEERS it toward one subfolder; it keeps full access to everything under the root.
+   */
+  private systemAppend(): string {
+    const hint = this.deps.folderHint;
+    if (!hint) return WATCH_SYSTEM_APPEND;
+    return `${WATCH_SYSTEM_APPEND}
+
+The person has set your focus to the "${hint}" directory inside the project root. Work primarily there — cd into it for commands and prefer files under it — unless a task clearly needs something elsewhere under the root. You still have full access to the whole root.`;
   }
 
   async interrupt(): Promise<void> {

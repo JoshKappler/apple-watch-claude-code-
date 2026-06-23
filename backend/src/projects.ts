@@ -31,6 +31,15 @@ const execFileP = promisify(execFile);
 /** Child folders we never surface as projects when scanning a parent root. */
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", ".Trash"]);
 
+/**
+ * Stable id for the synthetic "project root" pseudo-project — the scan root itself
+ * (e.g. ~/Desktop/projects), not one of its children. Every agent SPAWNS here, with
+ * cwd = the root, so it can reach every folder underneath. Selecting a real project
+ * later doesn't change cwd; it just sets a soft focus hint (see attachAgent/folderHint).
+ * Selecting THIS id clears that hint and returns focus to the whole root.
+ */
+export const ROOT_ID = "__root__";
+
 export interface Project {
   id: string;
   name: string;
@@ -129,12 +138,31 @@ export class ProjectRegistry {
   }
 
   get(id: string): Project | undefined {
+    if (id === ROOT_ID) return this.rootProject();
     return this.discover().find((p) => p.id === id);
   }
 
   /** Most recently modified project, so a fresh session lands on your latest repo. */
   default(): Project | undefined {
     return this.list()[0];
+  }
+
+  /**
+   * The "project root" pseudo-project: the first scan root (e.g. ~/Desktop/projects), or — if
+   * only an explicit allowlist is configured — its first entry. This is the DEFAULT spawn cwd for
+   * every new agent, so a fresh agent can operate across every folder under the root and a folder
+   * choice is just a soft hint. Returns undefined only if nothing is configured at all.
+   */
+  rootProject(): Project | undefined {
+    const root = this.scanRoots[0] ?? this.explicitRoots[0];
+    if (!root) return undefined;
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(root).mtimeMs;
+    } catch {
+      return undefined;
+    }
+    return { id: ROOT_ID, name: path.basename(root) || "root", root, mtimeMs };
   }
 
   /**
@@ -185,7 +213,15 @@ export class ProjectRegistry {
       }),
     );
     withRecency.sort((a, b) => b.recency - a.recency);
-    return withRecency.map((w) => w.ref);
+    const refs = withRecency.map((w) => w.ref);
+    // Surface the root itself at the TOP so the picker can return an agent's focus to the whole
+    // project root (clears the soft folder hint), not just narrow it to a child.
+    const root = this.rootProject();
+    if (root) {
+      const { branch, dirty } = await this.gitInfo(root.root);
+      refs.unshift({ id: root.id, name: root.name, path: root.root, branch, dirty });
+    }
+    return refs;
   }
 
   /** Best-effort current branch + dirty flag + last-commit time. Never throws. */

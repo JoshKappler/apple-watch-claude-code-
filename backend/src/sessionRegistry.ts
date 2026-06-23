@@ -79,7 +79,14 @@ export interface SessionState {
   sessionId: string;
   agent: AgentSession;
   approvals: ApprovalRegistry;
+  /** The cwd project — always the project ROOT for agents spawned under the new multi-agent flow. */
   project: Project;
+  /**
+   * Soft focus folder (a child of the root) chosen via select-project. Does NOT change cwd; it only
+   * appends a "work primarily in <name>" steer to the system prompt and relabels the session for the
+   * watch. Undefined = focused on the whole root.
+   */
+  folderHint?: Project;
   mode: PermissionMode;
   /** Active model id for this session (defaults to config.model). */
   model: string;
@@ -175,16 +182,19 @@ export function attachAgent(
   project: Project,
   mode: PermissionMode,
   resume?: string,
+  folderHint?: Project,
 ): void {
   const approvals = new ApprovalRegistry();
   state.approvals = approvals;
   state.project = project;
+  state.folderHint = folderHint;
   state.mode = mode;
 
   const deps: SessionDeps = {
     send: (m) => pushEvent(state, m),
     approvals,
     cwd: project.root,
+    folderHint: folderHint?.name,
     model: state.model,
     thinking: state.thinking,
     // Set only on REVIVE: hands the SDK the prior conversation's id so it reloads that
@@ -248,6 +258,7 @@ export function reviveSession(
     agent: undefined as unknown as AgentSession, // set by attachAgent
     approvals: undefined as unknown as ApprovalRegistry, // set by attachAgent
     project,
+    folderHint: undefined,
     mode: rec.mode,
     model: rec.model,
     thinking: rec.thinking,
@@ -293,6 +304,7 @@ export function createSession(
     agent: undefined as unknown as AgentSession, // set by attachAgent
     approvals: undefined as unknown as ApprovalRegistry, // set by attachAgent
     project,
+    folderHint: undefined,
     mode,
     model: opts.model ?? config.model,
     thinking: opts.thinking ?? "off",
@@ -310,9 +322,13 @@ export function createSession(
   return state;
 }
 
-/** Resolve the project a fresh session should use (default, with mock fallback). */
+/**
+ * Resolve the cwd project a FRESH session should spawn in: the project ROOT (so every agent starts
+ * with access to the whole tree and a folder choice is just a soft hint). Falls back to the
+ * most-recent child if no scan root is configured, then to a mock project.
+ */
 export function defaultProject(): Project | null {
-  const project = projectRegistry.default();
+  const project = projectRegistry.rootProject() ?? projectRegistry.default();
   if (!project && !config.mock) return null;
   return project ?? { id: "mock", name: "mock", root: process.cwd(), mtimeMs: 0 };
 }

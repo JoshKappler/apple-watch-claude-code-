@@ -107,20 +107,28 @@ final class WSClient: NSObject, @unchecked Sendable {
     private var model = "claude-opus-4-8"
     private var thinking = "medium"
 
+    /// The ACTIVE agent slot. Each agent the watch runs is an isolated backend session with its OWN
+    /// persisted resume id, poll cursor, and outbox — all keyed by (deviceId, slot). The original
+    /// single-agent state lives under the legacy "default" slot (no suffix) so an app already in the
+    /// field keeps resuming its one session unchanged after this update. Set via setActiveSlot /
+    /// switchAgent; everything that persists below resolves its key through this.
+    private var agentSlot = "default"
+    private func slotSuffix(_ slot: String) -> String { slot == "default" ? "" : ".\(slot)" }
+
     /// The agent session to resume on the next /api/session. PERSISTED to UserDefaults so it
     /// survives the watchOS app being suspended-then-killed (the common case: the screen sleeps,
     /// watchOS reclaims us AND frequently terminates the process, so the next launch builds a
     /// fresh client). Without persistence, every relaunch sent a nil resumeSessionId → the
     /// backend spun a brand-new agent session and the whole conversation + context was lost.
-    /// Keyed per (server, deviceId) so switching servers doesn't resurrect a dead session id.
+    /// Keyed per (server, deviceId, slot) so switching servers/agents doesn't cross wires.
     private var resumeSessionId: String? {
         didSet { Self.persistResume(resumeSessionId, key: resumeKey) }
     }
-    private var resumeKey: String { "pinch.resumeSessionId.\(deviceId)" }
+    private var resumeKey: String { "pinch.resumeSessionId.\(deviceId)\(slotSuffix(agentSlot))" }
     /// Persisted poll cursor for the resume session, so a relaunch continues where it left off
     /// instead of replaying the whole event log (the duplicate-bubble bug). Paired with
-    /// `resumeSessionId` — both are keyed per device and written together on a live session.
-    private var resumeCursorKey: String { "pinch.resumeCursor.\(deviceId)" }
+    /// `resumeSessionId` — both are keyed per (device, slot) and written together on a live session.
+    private var resumeCursorKey: String { "pinch.resumeCursor.\(deviceId)\(slotSuffix(agentSlot))" }
 
     // Reconnect bookkeeping.
     private var reconnectAttempt = 0
@@ -158,7 +166,7 @@ final class WSClient: NSObject, @unchecked Sendable {
     private var inflight: Set<String> = []
     /// At most one pending retry timer at a time (a transient send failure self-heals).
     private var outboxRetryTask: Task<Void, Never>?
-    private var outboxKey: String { "pinch.outbox.\(deviceId)" }
+    private var outboxKey: String { "pinch.outbox.\(deviceId)\(slotSuffix(agentSlot))" }
 
     /// Serial queue that confines all internal state mutation.
     private let queue = DispatchQueue(label: "com.josh.pinch.http")
@@ -283,6 +291,82 @@ final class WSClient: NSObject, @unchecked Sendable {
             self.reconnectAttempt = 0
             self.openSession()
         }
+    }
+
+    /// Point this client at agent `slot` WITHOUT opening a connection yet — used at startup so the
+    /// first connect targets the restored focused agent instead of the default slot. Loads the
+    /// slot's persisted resume id + outbox; the next connect()/openSession resumes its session.
+    func setActiveSlot(_ slot: String) {
+        queue.async { self.setActiveSlotLocked(slot, resume: true) }
+    }
+
+    /// Switch the ACTIVE agent to `slot` and re-open against it now. Each agent is an isolated
+    /// backend session (its own resume id / cursor / outbox, keyed by slot). With `resume` true we
+    /// re-attach the slot's existing session (the watch was driving it before); with `resume` false
+    /// we forget any prior session for the slot so /api/session spins up a FRESH agent at the
+    /// project root. The other agents' backend sessions keep running server-side and buffer their
+    /// events until we poll them again.
+    func switchAgent(slot: String, resume: Bool) {
+        queue.async {
+            self.setActiveSlotLocked(slot, resume: resume)
+            self.shouldStayConnected = true
+            self.everReachedReady = false   // fresh cold-attempt budget for the new slot
+            self.reconnectAttempt = 0
+            self.teardown(notify: false)
+            self.openSession()
+        }
+    }
+
+    /// Permanently end the agent in `slot`: tell the backend to tear its session down, then forget
+    /// the slot's persisted resume id / cursor / outbox. Safe for a slot that was never opened (no
+    /// persisted id → just clears local keys). Does NOT touch the active slot — the Store focuses a
+    /// different agent first when removing the one in focus.
+    func endAgent(slot: String) {
+        queue.async {
+            let suffix = slot == "default" ? "" : ".\(slot)"
+            let resumeKey = "pinch.resumeSessionId.\(self.deviceId)\(suffix)"
+            let cursorKey = "pinch.resumeCursor.\(self.deviceId)\(suffix)"
+            let outboxKey = "pinch.outbox.\(self.deviceId)\(suffix)"
+            if let sid = UserDefaults.standard.string(forKey: resumeKey) {
+                self.postEndSession(sessionId: sid)
+            }
+            UserDefaults.standard.removeObject(forKey: resumeKey)
+            UserDefaults.standard.removeObject(forKey: cursorKey)
+            UserDefaults.standard.removeObject(forKey: outboxKey)
+        }
+    }
+
+    /// Repoint all per-slot persistence at `slot` and load its durable state. Runs on `queue`.
+    /// Order matters: persist the CURRENT slot's outbox before we move the keys, then adopt the new
+    /// slot's outbox/resume so nothing leaks across agents.
+    private func setActiveSlotLocked(_ slot: String, resume: Bool) {
+        self.persistOutbox()                 // save the outgoing slot's outbox under its current key
+        self.agentSlot = slot                // from here every per-slot key resolves to `slot`
+        self.outbox = Self.loadOutbox(key: self.outboxKey)
+        self.inflight.removeAll()
+        if resume {
+            // Re-adopt the slot's stored session (didSet re-persists the same value harmlessly).
+            self.resumeSessionId = UserDefaults.standard.string(forKey: self.resumeKey)
+        } else {
+            // Fresh agent: drop any prior session + cursor so openSession creates a new one at root.
+            self.resumeSessionId = nil
+            Self.persistCursor(0, key: self.resumeCursorKey)
+        }
+        self.pollCursor = 0
+        self.appliedHighWater = 0
+    }
+
+    /// Fire-and-forget POST /api/end-session for an explicit (possibly non-active) session id.
+    private func postEndSession(sessionId: String) {
+        guard let url = makeAPIURL(path: "/api/end-session"),
+              let data = try? JSONSerialization.data(withJSONObject: ["sessionId": sessionId]) else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = data
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 30
+        session.dataTask(with: req) { _, _, _ in }.resume()
     }
 
     /// Ask the backend to restart its OWN process (rebuild dist/ + relaunch `node dist/index.js`)
@@ -877,6 +961,13 @@ final class WSClient: NSObject, @unchecked Sendable {
         if let data = try? JSONEncoder().encode(outbox) {
             UserDefaults.standard.set(data, forKey: outboxKey)
         }
+    }
+
+    /// Load + cap an outbox persisted under `key` (used when switching the active agent slot).
+    private static func loadOutbox(key: String) -> [OutboxItem] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let saved = try? JSONDecoder().decode([OutboxItem].self, from: data) else { return [] }
+        return Array(saved.suffix(50))
     }
 
     /// One pending retry at a time; a transient send failure self-heals after a short delay even

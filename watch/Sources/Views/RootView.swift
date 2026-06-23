@@ -12,7 +12,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: PinchStore
     @State private var showSettings = false
-    @State private var showProjects = false
+    @State private var showHub = false
 
     var body: some View {
         NavigationStack {
@@ -33,8 +33,8 @@ struct RootView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if !store.chromeCollapsed {
                         Button {
-                            store.listProjects()
-                            showProjects = true
+                            store.listProjects()   // prefetch so the hub's folder picker is warm
+                            showHub = true
                         } label: {
                             Image(systemName: "folder")
                                 .overlay(alignment: .topTrailing) {
@@ -45,7 +45,7 @@ struct RootView: View {
                                         .offset(x: 5, y: -4)
                                 }
                         }
-                        .accessibilityLabel("Projects")
+                        .accessibilityLabel("Agents and folders")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -65,7 +65,7 @@ struct RootView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showProjects) { ProjectPickerView() }
+            .sheet(isPresented: $showHub) { HubView() }
         }
         // Orange is applied per-control (send, mic, bubbles), NOT globally — a global tint
         // turns watchOS 26's toolbar buttons into solid orange blobs. Keep nav icons neutral.

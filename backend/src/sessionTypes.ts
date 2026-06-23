@@ -79,6 +79,12 @@ export interface SessionDeps {
   send: SendFn;
   approvals: ApprovalGate;
   cwd: string;
+  /**
+   * Soft focus folder NAME (e.g. "jobhunt"), appended to the system prompt. The agent's cwd stays
+   * at the project root, so this is only a steer toward one subfolder — never a sandbox. Undefined
+   * means "work across the whole root".
+   */
+  folderHint?: string;
   model: string;
   /** Extended-thinking level for the first turn (default "off" when omitted). */
   thinking?: ThinkingLevel;

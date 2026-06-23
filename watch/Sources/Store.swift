@@ -42,6 +42,16 @@ enum ThinkingLevel: String, CaseIterable, Identifiable {
     }
 }
 
+/// One agent in the multi-agent switcher. An agent is a SEPARATE backend session on the Mac (all
+/// spawned at the project root); the watch drives exactly one at a time — the "focused" one.
+/// `id` is a local slot id ("default" for the original agent, else a UUID); the transport keys each
+/// agent's resume/cursor/outbox by it. `label` is what the switcher shows — the focused folder (or
+/// root) name, updated whenever the agent's project is known. Codable so the list survives relaunch.
+struct AgentSlot: Identifiable, Codable, Equatable {
+    let id: String
+    var label: String
+}
+
 /// The contract names the store type `Store`; the concrete ObservableObject is `PinchStore`.
 /// This alias lets the UI agent's `Store.availableModels` resolve while every existing
 /// `@EnvironmentObject … PinchStore` binding keeps working unchanged.
@@ -136,6 +146,15 @@ final class PinchStore: ObservableObject {
     @Published var projectsLoading = false
     private var wantProjects = false   // re-request once `ready` if asked before the socket was up
 
+    // Multi-agent switcher. `agents` is the list shown in the upper-left hub; `focusedAgentId` is
+    // the one the transport is actively driving (its slot keys the resume/cursor/outbox in WSClient).
+    // Both persist so the set of running agents survives an app relaunch. The transcript of an agent
+    // you switch AWAY from is parked in `transcriptStash` (in-memory) so returning restores its
+    // conversation; the backend session keeps running regardless, so context is never lost.
+    @Published var agents: [AgentSlot] = [AgentSlot(id: "default", label: "Agent 1")]
+    @Published var focusedAgentId = "default"
+    private var transcriptStash: [String: [TranscriptItem]] = [:]
+
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
     let shake = ShakeDetector()
@@ -171,6 +190,8 @@ final class PinchStore: ObservableObject {
         static let thinking = "pinch.thinking"
         static let tts = "pinch.tts"
         static let mode = "pinch.mode"
+        static let agents = "pinch.agents"
+        static let focusedAgent = "pinch.focusedAgent"
     }
 
     /// Selected API model id. Persisted; pushed to the backend on change when connected.
@@ -230,6 +251,38 @@ final class PinchStore: ObservableObject {
         // Restore the permission mode so the remembered posture (e.g. Skip permissions) is in place
         // before the first connect; the .ready handler re-asserts it onto the session.
         mode = PermissionMode(rawValue: d.string(forKey: SettingsKey.mode) ?? PermissionMode.default.rawValue) ?? .default
+
+        // Restore the multi-agent registry. A first launch (or a decode miss) seeds the single
+        // "default" agent so the app always has exactly one focused agent to drive.
+        if let data = d.data(forKey: SettingsKey.agents),
+           let saved = try? JSONDecoder().decode([AgentSlot].self, from: data), !saved.isEmpty {
+            agents = saved
+        } else {
+            agents = [AgentSlot(id: "default", label: "Agent 1")]
+        }
+        focusedAgentId = d.string(forKey: SettingsKey.focusedAgent) ?? "default"
+        if !agents.contains(where: { $0.id == focusedAgentId }) {
+            focusedAgentId = agents.first?.id ?? "default"
+        }
+    }
+
+    /// Persist the agent registry + which one is focused, so the running set survives relaunch.
+    private func persistAgents() {
+        let d = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(agents) { d.set(data, forKey: SettingsKey.agents) }
+        d.set(focusedAgentId, forKey: SettingsKey.focusedAgent)
+    }
+
+    /// Rename the focused agent's row to the project it's currently scoped to (the folder hint, or
+    /// the root). Called when `ready`/`select_project` tells us the agent's project, so the switcher
+    /// shows "jobhunt" instead of a generic "Agent 2".
+    private func updateFocusedLabel() {
+        guard let name = currentProject?.name,
+              let idx = agents.firstIndex(where: { $0.id == focusedAgentId }) else { return }
+        if agents[idx].label != name {
+            agents[idx].label = name
+            persistAgents()
+        }
     }
 
     /// Push the current model + thinking to the backend, but only when a session is live.
@@ -270,6 +323,8 @@ final class PinchStore: ObservableObject {
                 self?.markDelivery(id: id, delivered: delivered)
             }
             self.ws = client
+            // Target the restored focused agent so the first connect resumes IT, not the default slot.
+            if focusedAgentId != "default" { client.setActiveSlot(focusedAgentId) }
         }
         // Seed the client with the restored model/thinking so the FIRST /api/session body
         // carries them (no-op'd network push since no session exists yet — it just stages them).
@@ -450,7 +505,64 @@ final class PinchStore: ObservableObject {
     func selectProject(_ project: ProjectRef) {
         ws?.send(.selectProject(projectId: project.id))
         currentProject = project
+        updateFocusedLabel()   // relabel the focused agent's row to the folder it's now scoped to
         Haptics.click()
+    }
+
+    // MARK: - Multi-agent intents (the upper-left agent switcher)
+
+    /// Spawn a NEW agent — a fresh backend session at the project root — and focus it. The current
+    /// agent's transcript is parked so you can switch back to it; the new agent starts on a clean
+    /// screen. Its backend session is created lazily by the transport's next /api/session.
+    func createAgent() {
+        transcriptStash[focusedAgentId] = transcript
+        let id = UUID().uuidString
+        agents.append(AgentSlot(id: id, label: "Agent \(agents.count + 1)"))
+        focusedAgentId = id
+        persistAgents()
+        prepareForAgentSwitch(restoring: nil)
+        ws?.switchAgent(slot: id, resume: false)
+        Haptics.click()
+    }
+
+    /// Focus an existing agent: park the current transcript, restore the target's, and re-point the
+    /// transport at the target's (still-running) backend session so prompts now drive it.
+    func focusAgent(_ id: String) {
+        guard id != focusedAgentId else { return }
+        transcriptStash[focusedAgentId] = transcript
+        focusedAgentId = id
+        persistAgents()
+        prepareForAgentSwitch(restoring: transcriptStash[id])
+        ws?.switchAgent(slot: id, resume: true)
+        Haptics.click()
+    }
+
+    /// Remove an agent and END its backend session. Never removes the last one. If it's the focused
+    /// agent, a neighbor is focused FIRST (so the active session swaps cleanly) and only then is the
+    /// old one torn down.
+    func removeAgent(_ id: String) {
+        guard agents.count > 1 else { return }
+        if id == focusedAgentId {
+            let next = agents.first(where: { $0.id != id })?.id ?? "default"
+            focusAgent(next)
+        }
+        agents.removeAll { $0.id == id }
+        transcriptStash[id] = nil
+        persistAgents()
+        ws?.endAgent(slot: id)
+        Haptics.click()
+    }
+
+    /// Shared on-screen reset for an agent switch: swap the transcript and clear the live-turn /
+    /// context state so the incoming agent doesn't inherit the outgoing one's thinking indicator,
+    /// permission gate, or usage ring. The real session state lives server-side; `ready` repopulates.
+    private func prepareForAgentSwitch(restoring transcript: [TranscriptItem]?) {
+        self.transcript = transcript ?? []
+        spokenAssistantIds.removeAll()
+        resetTurnState()
+        contextUsed = 0
+        contextWindow = 0
+        currentProject = nil
     }
 
     private func handleShake() {
@@ -473,6 +585,7 @@ final class PinchStore: ObservableObject {
                 ws?.send(.setMode(mode: mode))
             }
             currentProject = ready.project
+            updateFocusedLabel()   // name the focused agent's row after the project it landed on
             models = ready.models ?? []
             if ready.resumed {
                 appendNotice("Reconnected — session resumed.", warn: false)
