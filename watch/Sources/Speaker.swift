@@ -36,14 +36,11 @@ final class Speaker: NSObject, ObservableObject {
         synth.delegate = self
     }
 
-    /// Speak an assistant message aloud (if enabled + unmuted) and fire a haptic.
-    /// No-op entirely when TTS is disabled.
+    /// Speak an assistant message aloud (if enabled + unmuted). AUDIO ONLY — the per-reply
+    /// haptic is fired by the Store (Haptics.response()) so you feel a reply land even with
+    /// readback off, which is the common case. No-op entirely when TTS is disabled.
     func speak(_ text: String) {
         guard ttsEnabled else { return }
-
-        // The haptic is the reliable channel — fire it whether or not audio is muted/routed.
-        Haptics.spoken()
-
         guard !isMuted else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

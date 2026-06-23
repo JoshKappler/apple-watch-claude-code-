@@ -23,6 +23,7 @@ struct HubView: View {
                     Label("Folder", systemImage: "folder")
                         .font(.system(size: 16, weight: .medium))
                 }
+                .simultaneousGesture(TapGesture().onEnded { Haptics.click() })
 
                 NavigationLink {
                     AgentListView()
@@ -37,6 +38,7 @@ struct HubView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .simultaneousGesture(TapGesture().onEnded { Haptics.click() })
             }
             .navigationTitle("Switch")
         }

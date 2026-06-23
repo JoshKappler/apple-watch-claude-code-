@@ -33,6 +33,7 @@ struct RootView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if !store.chromeCollapsed {
                         Button {
+                            Haptics.click()
                             store.listProjects()   // prefetch so the hub's folder picker is warm
                             showHub = true
                         } label: {
@@ -50,7 +51,7 @@ struct RootView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if !store.chromeCollapsed {
-                        Button { showSettings = true } label: {
+                        Button { Haptics.click(); showSettings = true } label: {
                             Image(systemName: "gearshape")
                                 // Context-window usage rides as a thin ring AROUND the gear (a
                                 // horizontal bar can't live between the toolbar items on watchOS —

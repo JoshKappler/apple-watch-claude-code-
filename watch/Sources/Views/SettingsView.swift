@@ -36,6 +36,7 @@ struct SettingsView: View {
                     dismiss()
                 }
                 Button("Clear transcript", role: .destructive) {
+                    Haptics.click()
                     store.clearTranscript()
                     dismiss()
                 }
@@ -49,6 +50,7 @@ struct SettingsView: View {
             Section("Permission mode") {
                 ForEach(PermissionMode.allCases) { m in
                     Button {
+                        Haptics.click()
                         if m == .bypassPermissions {
                             confirmBypass = true        // guarded — don't apply yet
                         } else {
@@ -119,6 +121,7 @@ struct SettingsView: View {
                 // values baked into the build (Secrets.swift). Editing either field above persists
                 // and overrides these — the user owns the setting now.
                 Button("Reset to baked default") {
+                    Haptics.click()
                     serverURL = Secrets.serverURL
                     token = Secrets.token
                 }
@@ -137,8 +140,11 @@ struct SettingsView: View {
                 if let project = store.currentProject {
                     LabeledContent("Project") { Text(project.name) }
                 }
-                Button("Reconnect now") { store.reconnect() }
-                    .disabled(!store.canConnect)
+                Button("Reconnect now") {
+                    Haptics.click()
+                    store.reconnect()
+                }
+                .disabled(!store.canConnect)
                 // Restart the long-running backend process on the Mac. Heavier than Reconnect (which
                 // only re-opens the client socket): this rebuilds + relaunches `node dist/index.js`
                 // so backend code you changed FROM the watch goes live. Guarded by a confirm.
@@ -154,6 +160,7 @@ struct SettingsView: View {
                 // and decides whether to speak). Replaces the old @AppStorage speakerMuted toggle.
                 Toggle("Speak replies", isOn: $store.ttsEnabled)
                     .tint(.pinch)
+                    .sensoryFeedback(.selection, trigger: store.ttsEnabled)
                 Text("Watch TTS can be silent without AirPods/Bluetooth audio. A haptic always fires regardless, so you still feel each reply.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)

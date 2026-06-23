@@ -23,8 +23,10 @@ enum Haptics {
     /// Something failed or a turn errored.
     static func failure() { play(.failure) }
 
-    /// Paired with TTS so you still get feedback when audio is silent.
-    static func spoken() { play(.notification) }
+    /// A real assistant reply just landed. Prominent, and fired on EVERY reply regardless of
+    /// the TTS setting — the audio readback is often silent (no Bluetooth route) or switched off,
+    /// so this buzz is the reliable "Claude answered" signal. Owned by the Store, not the Speaker.
+    static func response() { play(.notification) }
 
     /// Confirms a sent prompt / a cancel landed.
     static func click() { play(.click) }

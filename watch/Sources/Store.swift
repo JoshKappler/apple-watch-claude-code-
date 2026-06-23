@@ -170,6 +170,12 @@ final class PinchStore: ObservableObject {
     // at most once even if its event is somehow re-delivered. Cleared with the transcript.
     private var spokenAssistantIds: Set<UUID> = []
 
+    // True once we've buzzed a real reply in the CURRENT turn (Haptics.response). Lets the
+    // end-of-turn handler skip its own success() buzz when a reply already announced itself,
+    // so a normal Q&A turn gives ONE clear "answered" buzz instead of two stacked taps. Reset
+    // at each turn start.
+    private var didBuzzReplyThisTurn = false
+
     // Settings (mirrored from @AppStorage by the views via configure()).
     private var serverURLString = ""
     private var token = ""
@@ -372,6 +378,7 @@ final class PinchStore: ObservableObject {
     /// Clear context — wipe the on-watch transcript AND start a fresh Claude session
     /// (drops the resumed context so the next turn starts with an empty conversation).
     func clearContext() {
+        Haptics.click()
         // Stop any in-flight turn on the OLD session first — otherwise its agent keeps
         // running server-side after we've moved on.
         ws?.send(.cancel)
@@ -622,6 +629,7 @@ final class PinchStore: ObservableObject {
             // Start the turn timer the moment work begins; clear it the moment we go idle.
             if (state == .thinking || state == .running_tool), turnStartedAt == nil {
                 turnStartedAt = Date()
+                didBuzzReplyThisTurn = false   // new turn — arm the reply buzz again
             } else if state == .idle {
                 turnStartedAt = nil
             }
@@ -632,14 +640,17 @@ final class PinchStore: ObservableObject {
 
         case let .assistantMessage(text):
             let bubbleId = finalizeAssistant(text)
-            // Speak each assistant message AT MOST ONCE. The transport already dedupes events
+            // Handle each assistant message AT MOST ONCE. The transport already dedupes events
             // by index (so a re-poll can't re-deliver this), but we ALSO guard here by the
             // bubble's id so nothing — replay, resume replay, or a backend double-send — can
-            // make us speak the same message twice. The Speaker itself no-ops when ttsEnabled
-            // is false (Bug 2 gate), so this is the single speak() call for an assistant turn.
+            // double-fire. Buzz on EVERY reply (Haptics.response) independent of TTS, so you
+            // feel that Claude answered even with audio readback off (the common case); the
+            // Speaker handles AUDIO only and no-ops when ttsEnabled is false.
             if !spokenAssistantIds.contains(bubbleId) {
                 spokenAssistantIds.insert(bubbleId)
-                speaker.speak(text)        // speak aloud (if enabled) + haptic
+                Haptics.response()
+                didBuzzReplyThisTurn = true
+                speaker.speak(text)        // speak aloud (only if enabled + a route exists)
             }
 
         case .thinkingDelta:
@@ -666,7 +677,9 @@ final class PinchStore: ObservableObject {
             streamingAssistantIndex = nil
             thinkingActive = false
             turnStartedAt = nil
-            if stopReason == .end_turn { Haptics.success() }
+            // A clean turn that already buzzed its reply doesn't need a second tap; only buzz
+            // success here for turns that ended WITHOUT a reply (e.g. tool-only work).
+            if stopReason == .end_turn, !didBuzzReplyThisTurn { Haptics.success() }
             if stopReason == .error { Haptics.failure() }
 
         case let .notice(level, message):

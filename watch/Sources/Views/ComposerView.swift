@@ -249,11 +249,11 @@ struct ComposerView: View {
         return draftIsEmpty ? "Minimize — chat fills the screen" : "Expand input box, take crown"
     }
     private func draftArrowTapped() {
+        Haptics.click()
         if expanded {
             collapse()                       // shrink the maximized box, hand the crown back
         } else if draftIsEmpty {
             store.chromeCollapsed = true     // minimize chrome → chat fills the screen
-            Haptics.click()
         } else {
             editMode = .scroll
             store.inputOwnsCrown = true      // maximize the input box (scroll mode)
@@ -269,6 +269,7 @@ struct ComposerView: View {
 
     /// EDIT button: expand into caret mode, or collapse if already editing.
     private func toggleEdit() {
+        Haptics.click()
         if expanded && editMode == .edit {
             collapse()
         } else {
