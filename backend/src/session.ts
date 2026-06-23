@@ -200,6 +200,12 @@ export class ClaudeSession implements AgentSession {
       // Extended-thinking budget (off/low/medium/high → SDK ThinkingConfig).
       thinking: thinkingConfig(this.thinking),
     };
+    // Opt into the user's settings so the account's claude.ai cloud connectors (Gmail, Drive, …)
+    // auto-load and the watch gets the same tools as the CLI. Without this the SDK runs isolated
+    // with no connectors (the default that left the watch tool-less). Gated by config.loadConnectors
+    // (PINCH_LOAD_CONNECTORS); the kill-switch exists because loading user settings can also pull in
+    // user hooks/skills that bloat a turn.
+    if (this.deps.loadUserSettings) options.settingSources = ["user"];
     if (this.deps.resume) options.resume = this.deps.resume;
     // bypassPermissions: nothing asks → do NOT wire canUseTool.
     if (this.mode !== "bypassPermissions") {

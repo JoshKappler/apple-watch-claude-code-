@@ -93,6 +93,12 @@ export interface SessionDeps {
   initialMode: PermissionMode;
   /** Notified once the SDK reports its session id (for resume bookkeeping). */
   onSessionId?: (sessionId: string) => void;
+  /**
+   * Opt the SDK into the user's settings (settingSources: ['user']) so the account's claude.ai
+   * cloud connectors (Gmail, Drive, …) auto-load — the watch then has the same connectors as the
+   * CLI. Off = the isolated default (no user settings, no connectors). Set from config.loadConnectors.
+   */
+  loadUserSettings?: boolean;
 }
 
 /**

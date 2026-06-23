@@ -40,6 +40,16 @@ const EnvSchema = z
       .pipe(z.number().int().positive()),
     PINCH_TOKEN: z.string().min(1, "PINCH_TOKEN is required"),
     PINCH_MOCK: boolFlag,
+    // Load the user's claude.ai cloud connectors (Gmail, Drive, …) into every agent session by
+    // opting the SDK into user settings (settingSources: ['user']). This is what gives the watch
+    // the same connectors as the CLI terminal. Default ON; set PINCH_LOAD_CONNECTORS=0 to disable
+    // (the kill-switch) if loading user settings drags in unwanted hooks/skills that bloat a turn.
+    PINCH_LOAD_CONNECTORS: z
+      .string()
+      .optional()
+      .transform((v) =>
+        v === undefined ? true : ["1", "true", "yes", "on"].includes(v.trim().toLowerCase()),
+      ),
     // Explicit allowlist of repo roots (each becomes one selectable project).
     PINCH_PROJECTS: csv,
     // Parent dir(s) to SCAN: every immediate child folder becomes a selectable
@@ -109,6 +119,7 @@ function buildConfig() {
     port: env.PORT,
     token: env.PINCH_TOKEN,
     mock: env.PINCH_MOCK,
+    loadConnectors: env.PINCH_LOAD_CONNECTORS,
     projects: env.PINCH_PROJECTS,
     projectRoots: env.PINCH_PROJECT_ROOTS,
     model: env.PINCH_MODEL,
