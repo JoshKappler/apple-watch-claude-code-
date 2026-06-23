@@ -149,11 +149,11 @@ private struct ConversationScreen: View {
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
         // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
         .ignoresSafeArea(.container, edges: .bottom)
-        // Chrome collapse is now a BUTTON, not a swipe (see ComposerView): the down-arrow to the
-        // right of the empty input box minimizes; a short squat bar restores. The old swipe-over-
-        // the-transcript gesture was unpredictable — watchOS handed the finger drag to the scroll
-        // view's pan recognizer about half the time — so it (and its catcher overlay) are gone.
-        // The crown and the finger both scroll the transcript normally again.
+        // Chrome collapse/expand has TWO affordances: a vertical FINGER SWIPE over the transcript
+        // (swipe down to hide the composer, up to bring it back — see TranscriptView's gesture),
+        // plus the orange chevron BUTTONS in ComposerView as a discoverable fallback. The swipe is
+        // reliable now because the transcript is scrollDisabled (crown-only scroll), so there's no
+        // scroll pan to fight the drag — the reason earlier over-the-transcript swipes were dropped.
     }
 }
 

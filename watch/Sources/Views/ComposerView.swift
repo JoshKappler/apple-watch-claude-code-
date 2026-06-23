@@ -83,9 +83,9 @@ struct ComposerView: View {
 
     var body: some View {
         Group {
-            // Chrome collapsed (via a vertical swipe — see RootView): hide the draft box +
-            // edit/mic so the transcript fills the screen. Keep the Send button mounted so the
-            // hardware double-pinch still works. Doesn't apply while the input is expanded.
+            // Chrome collapsed (via a swipe-down over the transcript — see TranscriptView): hide
+            // the draft box + edit/mic so the transcript fills the screen. Keep the Send button
+            // mounted so the hardware double-pinch still works. Doesn't apply while input expanded.
             if store.chromeCollapsed && !expanded {
                 collapsedBar
             } else {
@@ -148,20 +148,21 @@ struct ComposerView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
         }
-        // No swipe-to-collapse here anymore — minimize is the down-arrow on the right of the empty
-        // draft box (see draftBox). Swipe arbitration with the transcript's scroll pan was too
-        // unreliable to keep.
+        // Minimize has two affordances: a swipe-down over the transcript (see TranscriptView) and
+        // the down-arrow on the right of the empty draft box (see draftBox). The swipe is reliable
+        // again now that the transcript is scrollDisabled (crown-only scroll), so no scroll pan
+        // fights the drag — the arbitration problem that forced this to be button-only is gone.
     }
 
-    /// Collapsed chrome (via a swipe-down): EVERYTHING is hidden — the draft box, all three
-    /// buttons, and (in RootView) the top folder/gear icons — so the transcript fills the WHOLE
-    /// screen for reading. The only thing left is a small orange UP chevron at the very bottom:
-    /// tap it (or swipe up) to bring the composer + top icons back. It always points UP — up means
-    /// "reveal / expand", never down.
+    /// Collapsed chrome (via a swipe-down over the transcript, or the empty draft box's down-arrow):
+    /// EVERYTHING is hidden — the draft box, all three buttons, and (in RootView) the top
+    /// folder/gear icons — so the transcript fills the WHOLE screen for reading. The only thing left
+    /// is a small orange UP chevron at the very bottom: tap it OR swipe up on the chat to bring the
+    /// composer + top icons back. It always points UP — up means "reveal / expand", never down.
     private var collapsedBar: some View {
-        // A single SHORT, wide handle so the chat feed keeps almost the entire screen. TAP only
-        // (swipe-to-restore was part of the unpredictable gesture and is gone). The up chevron
-        // means "bring the controls back up".
+        // A single SHORT, wide handle so the chat feed keeps almost the entire screen. Tap it OR
+        // swipe up anywhere on the chat to restore (the swipe is reliable now the transcript is
+        // scrollDisabled). The up chevron means "bring the controls back up".
         Button { store.chromeCollapsed = false; Haptics.click() } label: {
             Image(systemName: "chevron.up")
                 .font(.system(size: 11, weight: .bold))
