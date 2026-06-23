@@ -93,6 +93,14 @@ struct SettingsView: View {
                 Text("e.g. wss://pinch.yourdomain.com — the backend's public URL. Token is the PINCH_TOKEN you set in the backend .env.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                // Escape hatch: if a typo'd or dead URL strands the watch, one tap restores the
+                // values baked into the build (Secrets.swift). Editing either field above persists
+                // and overrides these — the user owns the setting now.
+                Button("Reset to baked default") {
+                    serverURL = Secrets.serverURL
+                    token = Secrets.token
+                }
+                .font(.system(size: 12))
             }
 
             Section("Connection") {

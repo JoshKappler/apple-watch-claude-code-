@@ -21,20 +21,29 @@ struct PinchApp: App {
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
     init() {
-        // Pre-fill pairing so there is NOTHING to type on the watch. The URL + token live in
+        // Pre-fill pairing so there is NOTHING to type on a fresh install. The URL + token live in
         // Secrets.swift, which is GITIGNORED — the token is an RCE password and must never be
         // committed. Copy watch/Secrets.example.swift → watch/Sources/Secrets.swift (or run
         // ./setup.sh, which does it and injects PINCH_TOKEN from backend/.env).
+        //
+        // These are registered as out-of-box DEFAULTS only: register(defaults:) fills the keys
+        // when the user has set nothing, but never clobbers a value typed in Settings. So the baked
+        // Secrets URL is the fallback, and a URL the user enters now PERSISTS across launches and
+        // wins — which is what makes a stable/named tunnel (or any URL swap) a Settings edit instead
+        // of a rebuild. If a typo'd/dead URL ever strands the watch, Settings → "Reset to baked
+        // default" restores these in one tap.
         let defaults = UserDefaults.standard
         defaults.register(defaults: ["pinch.serverURL": Secrets.serverURL, "pinch.token": Secrets.token])
 
-        // TEMP (dev phase): the quick-tunnel URL changes between sessions, and a value an
-        // earlier build wrote to UserDefaults would override register(defaults:) and strand the
-        // watch on a DEAD old tunnel (symptom: "Connecting…" forever, nothing in the backend
-        // log). Force the live values every launch so a stale stored URL can't do that. Remove
-        // this force-write once we move to a permanent tunnel and let the user own the setting.
-        defaults.set(Secrets.serverURL, forKey: "pinch.serverURL")
-        defaults.set(Secrets.token, forKey: "pinch.token")
+        // One-time migration off the old dev-phase force-write (which rewrote pairing every launch).
+        // That left a concrete stored value that would now shadow the registered default; clear it
+        // ONCE so the baked default (or a future user edit) takes over cleanly. Thereafter the user
+        // owns the setting and nothing here touches it.
+        if !defaults.bool(forKey: "pinch.pairingMigratedV2") {
+            defaults.removeObject(forKey: "pinch.serverURL")
+            defaults.removeObject(forKey: "pinch.token")
+            defaults.set(true, forKey: "pinch.pairingMigratedV2")
+        }
     }
 
     var body: some Scene {
