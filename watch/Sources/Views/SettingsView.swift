@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("pinch.token") private var token = ""
 
     @State private var confirmBypass = false
+    @State private var confirmRestart = false
 
     var body: some View {
         // Own NavigationStack so the .navigationLink sub-pickers (Model / Effort) push WITHIN the
@@ -22,6 +23,22 @@ struct SettingsView: View {
         // the main screen (which is what happened when these links pushed onto the root stack).
         NavigationStack {
         List {
+            // Clear context lives at the TOP — it's the most-used control, so it's one tap from
+            // opening Settings instead of a scroll to the bottom.
+            Section {
+                Button("Clear context", role: .destructive) {
+                    store.clearContext()
+                    dismiss()
+                }
+                Button("Clear transcript", role: .destructive) {
+                    store.clearTranscript()
+                    dismiss()
+                }
+                Text("Clear context starts a fresh Claude session — a new conversation with no memory of the previous one. Clear transcript only wipes the on-watch history.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
             // Permission mode — moved here from the bottom bar. Each row calls store.setMode.
             // bypassPermissions keeps the RED styling + a guarded confirmation alert.
             Section("Permission mode") {
@@ -117,6 +134,14 @@ struct SettingsView: View {
                 }
                 Button("Reconnect now") { store.reconnect() }
                     .disabled(!store.canConnect)
+                // Restart the long-running backend process on the Mac. Heavier than Reconnect (which
+                // only re-opens the client socket): this rebuilds + relaunches `node dist/index.js`
+                // so backend code you changed FROM the watch goes live. Guarded by a confirm.
+                Button("Restart backend", role: .destructive) { confirmRestart = true }
+                    .disabled(!store.canConnect)
+                Text("Restart backend rebuilds and relaunches the Claude backend on your Mac so it picks up backend code changes you made from the watch. The connection drops for a few seconds, then your conversation is restored automatically.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
 
             Section("Audio") {
@@ -144,19 +169,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Button("Clear context", role: .destructive) {
-                    store.clearContext()
-                    dismiss()
-                }
-                Button("Clear transcript", role: .destructive) {
-                    store.clearTranscript()
-                    dismiss()
-                }
-                Text("Clear context starts a fresh Claude session — a new conversation with no memory of the previous one. Clear transcript only wipes the on-watch history.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
         }
         .navigationTitle("Settings")
         }
@@ -168,6 +180,16 @@ struct SettingsView: View {
             }
         } message: {
             Text("The agent will run edits and commands with NO approvals. It can modify and delete files and run shell commands unattended. Only do this when you trust the task.")
+        }
+        .alert("Restart backend?", isPresented: $confirmRestart) {
+            Button("Cancel", role: .cancel) { }
+            Button("Restart", role: .destructive) {
+                store.restartBackend()
+                Haptics.click()
+                dismiss()
+            }
+        } message: {
+            Text("Your Mac rebuilds and relaunches the Claude backend. This ends any running turn and drops the connection for a few seconds; your conversation is restored automatically once it's back.")
         }
     }
 

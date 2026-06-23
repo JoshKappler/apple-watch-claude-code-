@@ -109,6 +109,13 @@ change how the watch renders/speaks replies, keep this append in sync.
   `node dist/index.js`. Rebuilding `dist/` is NOT enough — the running process
   serves stale code until killed + relaunched (via `infra/start-pinch.command`).
   Tell: a brand-new session whose context ring reads ~25% full = a stale process.
+  The watch can trigger this itself: **Settings → Restart backend** POSTs
+  `/api/restart` (`httpApi.handleRestart`), which spawns the detached
+  `infra/restart-backend.sh`. That script builds FIRST (old process keeps serving),
+  and only kills + relaunches if the build SUCCEEDS — a failed build leaves the
+  tether alive. After the swap the watch 410s and `reviveSession()` restores the
+  same conversation. Caveat: the button is itself backend code, so the very FIRST
+  time you must restart from the Mac (the running process predates `/api/restart`).
 - **Reinstall the watch app to apply watch changes.** All the client-side Swift
   only reaches the wrist on a fresh Xcode build + install.
 - **Token sync.** After rotating `PINCH_TOKEN` in `backend/.env`, restart the

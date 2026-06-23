@@ -16,6 +16,9 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { srv, PROTOCOL_VERSION } from "@pinch/protocol";
 import { config } from "./config.js";
@@ -151,6 +154,9 @@ export async function handleApiRequest(
         return true;
       case "POST /api/cancel":
         await handleCancel(req, res);
+        return true;
+      case "POST /api/restart":
+        await handleRestart(req, res);
         return true;
       case "GET /api/projects":
         await handleProjects(res);
@@ -426,6 +432,72 @@ async function handleCancel(
   pushEvent(state, srv.status("idle"));
   pushEvent(state, srv.turnComplete("cancelled"));
   sendJson(res, 200, { ok: true });
+}
+
+/**
+ * Set once a restart has been kicked off, so a double-tap from the watch can't spawn two parallel
+ * rebuilds (which would race on dist/ and double-bind the port). Lives only for this process's
+ * lifetime — which is the point: the process is about to be replaced by a fresh one.
+ */
+let restartInitiated = false;
+
+/**
+ * POST /api/restart → rebuild + relaunch THIS backend process so backend code changes made from
+ * the watch go live (the running `node dist/index.js` holds the old code; a rebuild alone isn't
+ * enough — the process must be replaced). Delegates to the detached `infra/restart-backend.sh`,
+ * which builds FIRST while this process keeps serving and only kills + relaunches if the build
+ * SUCCEEDS — so a typo in a watch-driven edit can never strand the watch with a dead tether. After
+ * the swap the watch's next poll 410s and revives the SAME session, so the conversation is kept.
+ */
+async function handleRestart(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = (await readJsonBody(req)) as Record<string, unknown>;
+  const sessionId = asString(body.sessionId);
+  const state = sessionId ? sessions.get(sessionId) : undefined;
+
+  if (restartInitiated) {
+    sendJson(res, 202, { ok: true, already: true });
+    return;
+  }
+  restartInitiated = true;
+
+  // Breadcrumb the watch can show during the rebuild window (the old process is still serving,
+  // so this poll still reaches the client before the swap). The revived session starts a fresh
+  // log, so this notice is naturally transient.
+  if (state) {
+    pushEvent(state, srv.notice("info", "Restarting backend — reconnecting shortly…"));
+    state.lastActiveAt = Date.now();
+  }
+
+  // Resolve the script from this file: backend/dist/httpApi.js → ../../ = repo root.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = resolve(here, "../..");
+  const script = resolve(repoRoot, "infra/restart-backend.sh");
+
+  log.warn(
+    { pid: process.pid, script },
+    "restart requested from watch — rebuilding + relaunching backend",
+  );
+
+  // Ack BEFORE spawning so the watch gets its 202. We do NOT exit here: the restarter kills this
+  // process itself, but only after a successful build (so a build failure keeps the tether alive).
+  sendJson(res, 202, { ok: true });
+
+  const child = spawn("bash", [script, String(process.pid)], {
+    cwd: repoRoot,
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.on("error", (err) => {
+    // Couldn't even launch the script (missing bash / script) — nothing was torn down, so let the
+    // user retry.
+    restartInitiated = false;
+    log.error({ err, script }, "failed to spawn restart script");
+  });
+  child.unref();
 }
 
 /** GET /api/projects → the project registry. */

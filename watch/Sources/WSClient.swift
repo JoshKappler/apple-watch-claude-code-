@@ -285,6 +285,15 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Ask the backend to restart its OWN process (rebuild dist/ + relaunch `node dist/index.js`)
+    /// so backend code changes go live. HTTP-only operational action — there is no ServerMsg/poll
+    /// frame for it. The backend rebuilds while the old process keeps serving, then kills itself and
+    /// a fresh process binds the same port; our next poll 410s and re-creates/revives the SAME
+    /// session, so the conversation is preserved (the existing backend-restart path).
+    func restartBackend() {
+        queue.async { self.postJSON(path: "/api/restart", body: [:]) }
+    }
+
     // All `private` methods below assume they run on `queue`.
 
     /// "Connect" == POST /api/session. Emits .connecting while in flight; on success stores +

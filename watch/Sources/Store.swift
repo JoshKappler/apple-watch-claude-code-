@@ -304,6 +304,16 @@ final class PinchStore: ObservableObject {
         ws?.reconnectNow()
     }
 
+    /// Restart the backend PROCESS on the Mac — the long-running `node dist/index.js` tether that
+    /// runs the Claude Agent SDK and streams to this watch. Rebuilds dist/ and relaunches it so
+    /// backend code you changed from the watch goes live (a rebuild alone isn't enough; the running
+    /// process holds the old code). The connection drops briefly; the watch re-creates and REVIVES
+    /// the same session afterward, so the conversation/context is preserved. See WSClient.restartBackend.
+    func restartBackend() {
+        appendNotice("Restarting backend… reconnecting shortly.", warn: false)
+        ws?.restartBackend()
+    }
+
     /// Clear context — wipe the on-watch transcript AND start a fresh Claude session
     /// (drops the resumed context so the next turn starts with an empty conversation).
     func clearContext() {
