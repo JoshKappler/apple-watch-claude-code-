@@ -40,6 +40,11 @@ struct ComposerView: View {
     /// edit (caret) vs scroll, set by which control opened the expansion.
     @State private var editMode: InlineEditMode = .scroll
 
+    /// Two-tap guard on STOP: the first tap only ARMS it (icon flips to a confirm checkmark), a
+    /// second tap actually cancels the turn. Stops a stray bottom-left tap from killing a run.
+    /// Auto-disarms when the turn ends or after a few idle seconds (see body).
+    @State private var stopArmed = false
+
     /// True only while the caret editor is active (expanded AND in caret-edit mode). In this state
     /// the double-pinch dictates instead of sending — see the mic/send handGestureShortcut routing.
     private var inEditMode: Bool { expanded && editMode == .edit }
@@ -97,6 +102,20 @@ struct ComposerView: View {
         .animation(.snappy, value: store.draft.isEmpty)
         .animation(.snappy, value: store.inputOwnsCrown)
         .animation(.snappy, value: store.agentState)   // swap edit ⇄ stop as a turn starts/ends
+        .animation(.snappy, value: stopArmed)          // smooth stop → confirm icon swap
+        // Disarm the moment STOP leaves the screen (turn ended, or a draft was typed) so a
+        // half-finished confirm never carries over to the next turn as a live one-tap kill.
+        .onChange(of: showStop) { _, showing in
+            if !showing { stopArmed = false }
+        }
+        // …and auto-disarm a few seconds after arming if the confirm never comes, so one stray tap
+        // can't leave a live "next tap cancels" control sitting there.
+        .task(id: stopArmed) {
+            guard stopArmed else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            stopArmed = false
+        }
     }
 
     private var fullComposer: some View {
@@ -112,12 +131,19 @@ struct ComposerView: View {
                 // Same frame/corner either way so the row never shifts — only the icon + action swap.
                 if showStop {
                     // STOP — halt the current turn (like Esc in the terminal). Red so it reads as
-                    // an interrupt, not an accent control.
-                    BarButton(systemName: "stop.circle.fill",
+                    // an interrupt, not an accent control. TWO taps: the first arms it (icon flips to
+                    // a confirm checkmark), the second fires — so a stray tap here can't kill a run.
+                    BarButton(systemName: stopArmed ? "checkmark.circle.fill" : "stop.circle.fill",
                               tint: .red,
-                              label: "Stop Claude",
+                              label: stopArmed ? "Confirm stop" : "Stop Claude",
                               corner: .left) {
-                        store.cancel()
+                        if stopArmed {
+                            stopArmed = false
+                            store.cancel()          // cancel() fires its own haptic
+                        } else {
+                            stopArmed = true        // first tap only arms — needs a second to fire
+                            Haptics.click()
+                        }
                     }
                 } else {
                     // EDIT — expand the box + crown moves the caret. Highlighted while in edit mode.
