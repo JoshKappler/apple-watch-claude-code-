@@ -196,6 +196,7 @@ export function attachAgent(
     cwd: project.root,
     folderHint: folderHint?.name,
     loadUserSettings: config.loadConnectors,
+    autoTitle: config.autoTitle,
     model: state.model,
     thinking: state.thinking,
     // Set only on REVIVE: hands the SDK the prior conversation's id so it reloads that

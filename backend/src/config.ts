@@ -50,6 +50,15 @@ const EnvSchema = z
       .transform((v) =>
         v === undefined ? true : ["1", "true", "yes", "on"].includes(v.trim().toLowerCase()),
       ),
+    // Auto-name each agent: on its FIRST prompt, a cheap one-shot Haiku call summarizes the prompt
+    // into a 1-3 word title for the watch's agent switcher. Default ON; set PINCH_AUTO_TITLE=0 to
+    // disable the background calls (the watch still shows its own instant first-words title).
+    PINCH_AUTO_TITLE: z
+      .string()
+      .optional()
+      .transform((v) =>
+        v === undefined ? true : ["1", "true", "yes", "on"].includes(v.trim().toLowerCase()),
+      ),
     // Explicit allowlist of repo roots (each becomes one selectable project).
     PINCH_PROJECTS: csv,
     // Parent dir(s) to SCAN: every immediate child folder becomes a selectable
@@ -120,6 +129,7 @@ function buildConfig() {
     token: env.PINCH_TOKEN,
     mock: env.PINCH_MOCK,
     loadConnectors: env.PINCH_LOAD_CONNECTORS,
+    autoTitle: env.PINCH_AUTO_TITLE,
     projects: env.PINCH_PROJECTS,
     projectRoots: env.PINCH_PROJECT_ROOTS,
     model: env.PINCH_MODEL,

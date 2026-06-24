@@ -373,6 +373,18 @@ final class PinchStore: ObservableObject {
         return ([head] + picked.dropFirst()).joined(separator: " ")
     }
 
+    /// Apply a backend-generated (Haiku) title to the FOCUSED agent's slot, upgrading the instant
+    /// watch-derived one. Trimmed; empty titles are ignored.
+    private func applyAgentTitle(_ title: String) {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty,
+              let idx = agents.firstIndex(where: { $0.id == focusedAgentId }) else { return }
+        if agents[idx].title != t {
+            agents[idx].title = t
+            persistAgents()
+        }
+    }
+
     /// Push the current model + thinking to the backend, but only when a session is live.
     /// (When disconnected the values are staged in WSClient and ride the next /api/session.)
     private func pushConfig() {
@@ -782,6 +794,11 @@ final class PinchStore: ObservableObject {
         case let .context(used, window):
             contextUsed = used
             contextWindow = window
+
+        case let .agentTitle(title):
+            // Backend-generated 1-3 word title for the FOCUSED agent (it arrives on that agent's own
+            // event stream). Upgrade the instant watch-derived title with the cleaner Haiku one.
+            applyAgentTitle(title)
 
         case .pong:
             break   // heartbeat ack; nothing to do.

@@ -99,6 +99,11 @@ export interface SessionDeps {
    * CLI. Off = the isolated default (no user settings, no connectors). Set from config.loadConnectors.
    */
   loadUserSettings?: boolean;
+  /**
+   * Auto-title this agent from its first prompt (a cheap one-shot Haiku call). Off = skip the
+   * background call; the watch keeps its own instant first-words title. Set from config.autoTitle.
+   */
+  autoTitle?: boolean;
 }
 
 /**

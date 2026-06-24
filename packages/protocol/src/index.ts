@@ -207,6 +207,17 @@ export const PongMsg = z.object({
   t: z.number().optional(),
 });
 
+/**
+ * A short (1-3 word) title for THIS agent, generated backend-side from its first prompt (a cheap
+ * Haiku call) so the watch's agent switcher names each agent after what it's doing. Lands in the
+ * focused agent's event stream; the watch applies it to the focused slot, upgrading the instant
+ * watch-derived title.
+ */
+export const AgentTitleMsg = z.object({
+  type: z.literal("agent_title"),
+  title: z.string(),
+});
+
 export const ServerMsg = z.discriminatedUnion("type", [
   ReadyMsg,
   ProjectsMsg,
@@ -222,6 +233,7 @@ export const ServerMsg = z.discriminatedUnion("type", [
   NoticeMsg,
   ErrorMsg,
   ContextMsg,
+  AgentTitleMsg,
   PongMsg,
 ]);
 export type ServerMsg = z.infer<typeof ServerMsg>;
@@ -281,5 +293,7 @@ export const srv = {
     ({ type: "error", message, fatal }) satisfies z.infer<typeof ErrorMsg>,
   context: (used: number, window: number) =>
     ({ type: "context", used, window }) satisfies z.infer<typeof ContextMsg>,
+  agentTitle: (title: string) =>
+    ({ type: "agent_title", title }) satisfies z.infer<typeof AgentTitleMsg>,
   pong: (t?: number) => ({ type: "pong", t }) satisfies z.infer<typeof PongMsg>,
 };

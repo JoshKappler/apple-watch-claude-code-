@@ -17,6 +17,7 @@
  */
 import { srv, type PermissionMode } from "@pinch/protocol";
 import { log } from "./log.js";
+import { generateAgentTitle } from "./titler.js";
 import {
   permissionMeta,
   summarizeTool,
@@ -238,6 +239,21 @@ export class ClaudeSession implements AgentSession {
     this.query = q;
     this.turns.push(prompt);
     void this.consume();
+
+    // Auto-title this agent from its FIRST prompt, fire-and-forget, so the switcher names it after
+    // what it's doing. Fresh sessions only — a RESUME (revive) already carries its title on the
+    // watch, and re-titling from a mid-conversation prompt would be wrong. Never blocks the turn.
+    if (this.deps.autoTitle && !this.deps.resume) void this.titleFromFirstPrompt(prompt);
+  }
+
+  /** Generate + emit this agent's title from its first prompt (see titler.ts). Best-effort. */
+  private async titleFromFirstPrompt(prompt: string): Promise<void> {
+    const title = await generateAgentTitle({
+      prompt,
+      cwd: this.deps.cwd,
+      signal: this.abort.signal,
+    });
+    if (title && !this.abort.signal.aborted) this.deps.send(srv.agentTitle(title));
   }
 
   sendFollowUp(text: string): void {

@@ -182,6 +182,9 @@ enum ServerMsg: Sendable {
     case notice(level: NoticeLevel, message: String)
     case error(message: String, fatal: Bool)
     case context(used: Int, window: Int)
+    /// A 1-3 word title for the focused agent, generated backend-side from its first prompt. The
+    /// store applies it to the focused slot, upgrading the instant watch-derived title.
+    case agentTitle(title: String)
     case pong(t: Double?)
     case unknown(type: String)
 
@@ -320,6 +323,9 @@ extension ServerMsg: Decodable {
                 used: try c.decode(Int.self, forKey: .used),
                 window: try c.decode(Int.self, forKey: .window)
             )
+
+        case "agent_title":
+            self = .agentTitle(title: try c.decode(String.self, forKey: .title))
 
         case "pong":
             self = .pong(t: try c.decodeIfPresent(Double.self, forKey: .t))

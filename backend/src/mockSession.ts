@@ -113,6 +113,18 @@ export class MockSession implements AgentSession {
 
     try {
       this.deps.send(srv.status("thinking"));
+      // Mirror the real session's auto-title: emit a 1-3 word agent_title on the FIRST turn so the
+      // watch's switcher-naming path is exercisable end-to-end in mock mode (no LLM — just the
+      // prompt's first words, Title Cased).
+      if (turnId === 1) {
+        const title = prompt
+          .trim()
+          .split(/\s+/)
+          .slice(0, 3)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+        if (title) this.deps.send(srv.agentTitle(title));
+      }
       // Grow fake context occupancy each turn so the watch's usage ring visibly fills.
       // Use the SAME per-model windows the real session reports, so the ring reads
       // honestly in mock mode too (flat 200k made it ~5x too full on 1M models).
