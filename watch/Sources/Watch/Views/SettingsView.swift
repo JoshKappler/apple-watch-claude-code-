@@ -181,6 +181,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Build stamp — the git SHA + time baked into THIS binary at compile time. If this
+            // doesn't change after a flash, the new code never reached the wrist (it's the whole
+            // point of the stamp). Match it against what infra/flash-watch.sh prints.
+            Section("Build") {
+                Text(BuildStamp.value)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
         }
         .navigationTitle("Settings")
         }

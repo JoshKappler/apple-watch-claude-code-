@@ -125,6 +125,24 @@ else
 fi
 echo
 
+# --- 4b. Build stamp seed ---------------------------------------------------
+# BuildStamp.swift is gitignored and regenerated on every build by the "Generate BuildStamp"
+# preBuildScript, but it must EXIST before `xcodegen generate` so the project references it.
+# Seed a placeholder here; the first real build overwrites it with the live git SHA + time.
+bold "4b. Build stamp (watch/Sources/Shared/BuildStamp.swift)"
+STAMP_FILE="$REPO_ROOT/watch/Sources/Shared/BuildStamp.swift"
+if [[ -f "$STAMP_FILE" ]]; then
+  ok "watch/Sources/Shared/BuildStamp.swift already exists — leaving it (build refreshes it)."
+else
+  cat > "$STAMP_FILE" <<'SWIFT'
+// AUTO-GENERATED placeholder — overwritten on the first build by the "Generate BuildStamp"
+// preBuildScript in watch/project.yml. Gitignored; do not commit.
+enum BuildStamp { static let value = "dev (unstamped)" }
+SWIFT
+  ok "Created watch/Sources/Shared/BuildStamp.swift (gitignored placeholder)."
+fi
+echo
+
 # --- 5. reminders -----------------------------------------------------------
 bold "5. Still needed in backend/.env"
 info "ANTHROPIC_API_KEY=...      (or use PINCH_AUTH=subscription, the default)"

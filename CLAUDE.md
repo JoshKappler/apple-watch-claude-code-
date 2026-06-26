@@ -141,6 +141,21 @@ change how the watch renders/speaks replies, keep this append in sync.
   `Pinch.app/Pinch.debug.dylib` (the `Pinch` binary is just a launcher stub whose
   mtime never changes). If the dylib mtime predates your edits, `clean build`,
   then `xcrun simctl uninstall` + `install`.
+- **Flashing to the physical device — use `infra/flash-watch.sh`, never ad-hoc.**
+  Every build is version `1.0 (1)`, so a flash is otherwise invisible: you can't tell
+  a fresh binary from a stale one on the wrist. That, plus the wrong default Xcode
+  (`xcode-select` is the stable Xcode, but an OS-27 watch/phone can ONLY be installed
+  to with the **Xcode 27 beta** DDI) and several stray DerivedData trees you might
+  install from, is why "fixes" kept not landing for a half-dozen reviews. The fix is a
+  **build stamp compiled into the binary**: a gitignored `watch/Sources/Shared/BuildStamp.swift`
+  (git SHA + `+`-if-dirty + timestamp) regenerated every build by the `Generate BuildStamp`
+  preBuildScript in `project.yml` (needs `ENABLE_USER_SCRIPT_SANDBOXING: NO`), shown in
+  **Settings → Build** on both apps. `infra/flash-watch.sh [watch|phone] [--clean]` forces
+  the beta toolchain, builds + installs from ONE path (`/tmp/pinch-flash-dd`), and prints the
+  stamp it shipped. **Flash, then confirm Settings → Build matches that stamp** — if it
+  doesn't, the new code did NOT land (re-run with `--clean`). A stale binary cannot fake a
+  fresh stamp. Don't reintroduce other `-derivedDataPath` install recipes (the old
+  `/tmp/pinch-dd` one was a stale-install trap, now removed).
 - **SourceKit false positives:** per-file diagnostics like "Cannot find type
   'ServerMsg'/'PinchStore'" are single-file-analysis noise. Trust xcodebuild.
 - **Smoke test (WS path, mock):** `PINCH_MOCK=1 PINCH_TOKEN=test-token npm run dev`

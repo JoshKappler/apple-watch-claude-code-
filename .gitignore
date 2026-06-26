@@ -37,6 +37,9 @@ build/
 watch/Sources/Shared/Secrets.swift
 # (legacy pre-shared-core location, still ignored so an old checkout never commits it)
 watch/Sources/Secrets.swift
+# Regenerated on every build by the "Generate BuildStamp" preBuildScript (git SHA + timestamp,
+# compiled into the binary so a flash is self-verifying via Settings → Build). Never committed.
+watch/Sources/Shared/BuildStamp.swift
 
 # Cloudflare tunnel creds
 *.cloudflared.json

@@ -26,6 +26,7 @@ struct SettingsScreen: View {
                 modeSection
                 audioSection
                 contextSection
+                buildSection
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -154,6 +155,19 @@ struct SettingsScreen: View {
             Button("Compact context") { store.compactContext() }
             Button("Clear context", role: .destructive) { confirmClearContext = true }
             Button("Clear transcript") { store.clearTranscript() }
+        }
+    }
+
+    // The git SHA + time baked into THIS binary at compile time. If it doesn't change after a
+    // reinstall, the new code never landed — match it against what the flash prints.
+    private var buildSection: some View {
+        Section("Build") {
+            LabeledContent("Stamp") {
+                Text(BuildStamp.value)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
     }
 
