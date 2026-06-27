@@ -28,6 +28,12 @@
         <string>http</string>
         <string>__PORT__</string>
         <string>--url=https://__NGROK_DOMAIN__</string>
+        <!-- After a hard power loss the previous agent's session lingers on ngrok's
+             edge, so a fresh agent claiming the same reserved URL gets ERR_NGROK_334
+             ("endpoint already online") and dies for minutes until the ghost is
+             reaped. Pooling lets the new agent JOIN the endpoint instead of being
+             rejected, so the tunnel comes back immediately on reboot. -->
+        <string>--pooling-enabled</string>
         <string>--config=__NGROK_CONFIG__</string>
         <string>--log=stdout</string>
         <string>--log-format=logfmt</string>
